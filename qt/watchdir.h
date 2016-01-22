@@ -1,52 +1,58 @@
 /*
- * This file Copyright (C) Mnemosyne LLC
+ * This file Copyright (C) 2009-2015 Mnemosyne LLC
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2
- * as published by the Free Software Foundation.
+ * It may be used under the GNU GPL versions 2 or 3
+ * or any future license endorsed by Mnemosyne LLC.
  *
- * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
- *
- * $Id: watchdir.h 11092 2010-08-01 20:36:13Z charles $
+ * $Id: WatchDir.h 14539 2015-06-12 22:12:12Z mikedld $
  */
 
-#ifndef QTR_WATCHDIR_H
-#define QTR_WATCHDIR_H
+#ifndef QTR_WATCH_DIR_H
+#define QTR_WATCH_DIR_H
 
 #include <QObject>
 #include <QSet>
 #include <QString>
 
-class TorrentModel;
 class QFileSystemWatcher;
+
+class TorrentModel;
 
 class WatchDir: public QObject
 {
-        Q_OBJECT
+    Q_OBJECT
 
-    public:
-        WatchDir( const TorrentModel& );
-        ~WatchDir( );
+  public:
+    WatchDir (const TorrentModel&);
+    virtual ~WatchDir ();
 
-    public:
-        void setPath( const QString& path, bool isEnabled );
+    void setPath (const QString& path, bool isEnabled);
 
-    private:
-        enum { OK, DUPLICATE, ERROR };
-        int metainfoTest( const QString& filename ) const;
+  signals:
+    void torrentFileAdded (const QString& filename);
 
+  private:
+    enum
+    {
+      OK,
+      DUPLICATE,
+      ERROR
+    };
 
-    signals:
-        void torrentFileAdded( QString filename );
+  private:
+    int metainfoTest (const QString& filename) const;
 
-    private slots:
-        void watcherActivated( const QString& path );
-        void onTimeout( );
+  private slots:
+    void watcherActivated (const QString& path);
+    void onTimeout ();
 
-    private:
-        const TorrentModel& myModel;
-        QSet<QString> myWatchDirFiles;
-        QFileSystemWatcher * myWatcher;
+    void rescanAllWatchedDirectories ();
+
+  private:
+    const TorrentModel& myModel;
+
+    QSet<QString> myWatchDirFiles;
+    QFileSystemWatcher * myWatcher;
 };
 
-#endif
+#endif // QTR_WATCH_DIR_H

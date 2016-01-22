@@ -60,11 +60,6 @@ typedef sockaddr_storage SOCKADDR_STORAGE;
 // that hasn't been acked yet
 #define DUPLICATE_ACKS_BEFORE_RESEND 3
 
-// maximum number of resends SRS 11-30-2012
-// per BEP29 calculations limit is 2040 if so desired
-// RESENDS_MAX_COUNT never allowed to be 0
-#define RESENDS_MAX_COUNT 32
-
 #define DELAYED_ACK_BYTE_THRESHOLD 2400 // bytes
 #define DELAYED_ACK_TIME_THRESHOLD 100 // milliseconds
 
@@ -1492,6 +1487,8 @@ size_t UTPSocket::selective_ack_bytes(uint base, const byte* mask, byte len, int
 	return acked_bytes;
 }
 
+enum { MAX_EACK = 128 };
+
 void UTPSocket::selective_ack(uint base, const byte *mask, byte len)
 {
 	if (cur_window_packets == 0) return;
@@ -1504,10 +1501,8 @@ void UTPSocket::selective_ack(uint base, const byte *mask, byte len)
 	// resends is a stack of sequence numbers we need to resend. Since we
 	// iterate in reverse over the acked packets, at the end, the top packets
 	// are the ones we want to resend
-	// RESENDS_MAX_COUNT SRS 11-30-2012
-	int resends[RESENDS_MAX_COUNT];
+	int resends[MAX_EACK];
 	int nr = 0;
-	bool filled = false;
 
 	LOG_UTPV("0x%08x: Got EACK [%032b] base:%u", this, *(uint32*)mask, base);
 	do {
@@ -1579,13 +1574,13 @@ void UTPSocket::selective_ack(uint base, const byte *mask, byte len)
 		if (((v - fast_resend_seq_nr) & ACK_NR_MASK) <= OUTGOING_BUFFER_MAX_SIZE &&
 			count >= DUPLICATE_ACKS_BEFORE_RESEND &&
 			duplicate_ack < DUPLICATE_ACKS_BEFORE_RESEND) {
-			resends[nr++] = v;
-			if (nr >= RESENDS_MAX_COUNT) {
-				// we have filled AT LEAST ONCE so start dumpimg the oldest, one at a time
-				// maybe again, as we re-fill
-				filled = true;
-				nr = 0;
+			// resends is a stack, and we're mostly interested in the top of it
+			// if we're full, just throw away the lower half
+			if (nr >= MAX_EACK - 2) {
+				memmove(resends, &resends[MAX_EACK/2], MAX_EACK/2 * sizeof(resends[0]));
+				nr -= MAX_EACK / 2;
 			}
+			resends[nr++] = v;
 			LOG_UTPV("0x%08x: no ack for %u", this, v);
 		} else {
 			LOG_UTPV("0x%08x: not resending %u count:%d dup_ack:%u fast_resend_seq_nr:%u",
@@ -1599,38 +1594,15 @@ void UTPSocket::selective_ack(uint base, const byte *mask, byte len)
 		// resending, the first packet we should resend
 		// is base-1
 		resends[nr++] = (base - 1) & ACK_NR_MASK;
-		if (nr >= RESENDS_MAX_COUNT) {
-			// we have totally filled on the very last
-			// no need to reset
-			// no more new can come in, all previous over-fill gone
-			// saves extra one time processing in while loop below, but OK without this section
-			filled = false;
-		}
 	} else {
-		LOG_UTPV("0x%08x: not resending %u count:%d dup_ack:%u fast_resend_seq_nr:%u nr:%d",
-				 this, base - 1, count, duplicate_ack, fast_resend_seq_nr, nr);
+		LOG_UTPV("0x%08x: not resending %u count:%d dup_ack:%u fast_resend_seq_nr:%u",
+				 this, base - 1, count, duplicate_ack, fast_resend_seq_nr);
 	}
 
 	bool back_off = false;
 	int i = 0;
-	int bottom = 0;
-	int top = nr;
-	if ((top == 0) && filled) {
-		// exactly completely filled, but nothing pushed into over-fill
-		top = RESENDS_MAX_COUNT;
-		filled = false;
-	}
-	while (top > bottom) {
-		uint v = resends[--top];
-
-		// maybe next iteration begin to utilize what is left over before the last refill
-		if ((top == bottom) && filled) {
-		top = RESENDS_MAX_COUNT;
-		bottom = nr;
-		filled = false;
-		// iterate overfill only once at most
-		}
-
+	while (nr > 0) {
+		uint v = resends[--nr];
 		// don't consider the tail of 0:es to be lost packets
 		// only unacked packets with acked packets after should
 		// be considered lost

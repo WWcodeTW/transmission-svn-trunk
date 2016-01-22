@@ -40,35 +40,42 @@
 ****************************************************************************/
 
 #include <QPainter>
-#include <QResizeEvent>
 #include <QStyle>
 #include <QStyleOption>
 
-#include "squeezelabel.h"
+#include "SqueezeLabel.h"
 
-void SqueezeLabel::init()
+SqueezeLabel::SqueezeLabel (const QString& text, QWidget * parent):
+  QLabel (text, parent)
 {
-    setTextInteractionFlags(Qt::TextSelectableByMouse);
 }
 
-SqueezeLabel::SqueezeLabel(const QString& text, QWidget *parent): QLabel(text, parent)
+SqueezeLabel::SqueezeLabel (QWidget * parent):
+  QLabel (parent)
 {
-    init();
 }
 
-SqueezeLabel::SqueezeLabel(QWidget *parent) : QLabel(parent)
+void
+SqueezeLabel::paintEvent (QPaintEvent * paintEvent)
 {
-    init();
-}
+  if (hasFocus () && (textInteractionFlags () & (Qt::TextSelectableByKeyboard | Qt::TextSelectableByMouse)))
+    return QLabel::paintEvent (paintEvent);
 
-void SqueezeLabel::paintEvent(QPaintEvent* paintEvent)
-{
-    Q_UNUSED(paintEvent);
+  QPainter painter (this);
+  QFontMetrics fm = fontMetrics ();
+  QStyleOption opt;
+  opt.initFrom (this);
+  const QString fullText = text ();
+  const QString elidedText = fm.elidedText (fullText, Qt::ElideRight, width());
+  style()->drawItemText (&painter,
+                         contentsRect(),
+                         alignment(),
+                         opt.palette,
+                         isEnabled(),
+                         elidedText,
+                         foregroundRole());
 
-    QPainter painter(this);
-    QFontMetrics fm = fontMetrics();
-    QStyleOption opt;
-    opt.initFrom(this);
-    const QString elidedText = fm.elidedText( text(), Qt::ElideMiddle, width());
-    style()->drawItemText(&painter, contentsRect(), alignment(), opt.palette, isEnabled(), elidedText, foregroundRole());
+#ifndef QT_NO_TOOLTIP
+  setToolTip (fullText != elidedText ? fullText : QString ());
+#endif
 }

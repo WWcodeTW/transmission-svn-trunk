@@ -54,22 +54,25 @@ TransmissionRemote.prototype =
 		}
 
 		remote._error = request.responseText
-					? request.responseText.trim().replace(/(<([^>]+)>)/ig,"")
-					: "";
+		              ? request.responseText.trim().replace(/(<([^>]+)>)/ig,"")
+		              : "";
 		if (!remote._error.length)
 			remote._error = 'Server not responding';
 
 		dialog.confirm('Connection Failed',
 			'Could not connect to the server. You may need to reload the page to reconnect.',
 			'Details',
-			'alert(remote._error);',
-			null,
+			function() {
+				alert(remote._error);
+			},
 			'Dismiss');
 		remote._controller.togglePeriodicSessionRefresh(false);
 	},
 
 	appendSessionId: function(XHR) {
-		XHR.setRequestHeader('X-Transmission-Session-Id', this._token);
+		if (this._token) {
+			XHR.setRequestHeader('X-Transmission-Session-Id', this._token);
+		}
 	},
 
 	sendRequest: function(data, callback, context, async) {
@@ -98,12 +101,24 @@ TransmissionRemote.prototype =
 		var o = { method: 'session-get' };
 		this.sendRequest(o, callback, context, async);
 	},
-	
+
 	checkPort: function(callback, context, async) {
 		var o = { method: 'port-test' };
 		this.sendRequest(o, callback, context, async);
 	},
-	
+
+	renameTorrent: function(torrentIds, oldpath, newname, callback, context) {
+		var o = {
+			method: 'torrent-rename-path',
+			arguments: {
+				'ids': torrentIds,
+				'path': oldpath,
+				'name': newname
+			}
+		};
+		this.sendRequest(o, callback, context);
+	},
+
 	loadDaemonStats: function(callback, context, async) {
 		var o = { method: 'session-stats' };
 		this.sendRequest(o, callback, context, async);
@@ -112,7 +127,7 @@ TransmissionRemote.prototype =
 	updateTorrents: function(torrentIds, fields, callback, context) {
 		var o = {
 			method: 'torrent-get',
-				'arguments': {
+			arguments: {
 				'fields': fields
 			}
 		};
@@ -121,6 +136,18 @@ TransmissionRemote.prototype =
 		this.sendRequest(o, function(response) {
 			var args = response['arguments'];
 			callback.call(context,args.torrents,args.removed);
+		});
+	},
+
+	getFreeSpace: function(dir, callback, context) {
+		var remote = this;
+		var o = {
+			method: 'free-space',
+			arguments: { path: dir }
+		};
+		this.sendRequest(o, function(response) {
+			var args = response['arguments'];
+			callback.call (context, args.path, args['size-bytes']);
 		});
 	},
 
@@ -160,7 +187,7 @@ TransmissionRemote.prototype =
 
 	moveTorrents: function(torrent_ids, new_location, callback, context) {
 		var remote = this;
-		this.sendTorrentSetRequests( 'torrent-set-location', torrent_ids, 
+		this.sendTorrentSetRequests( 'torrent-set-location', torrent_ids,
 			{"move": true, "location": new_location}, callback, context);
 	},
 

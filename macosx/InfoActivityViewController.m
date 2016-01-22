@@ -1,5 +1,5 @@
 /******************************************************************************
- * $Id: InfoActivityViewController.m 13660 2012-12-13 13:38:58Z livings124 $
+ * $Id: InfoActivityViewController.m 14341 2014-10-17 05:12:00Z livings124 $
  *
  * Copyright (c) 2010-2012 Transmission authors and contributors
  *
@@ -23,6 +23,7 @@
  *****************************************************************************/
 
 #import "InfoActivityViewController.h"
+#import "NSApplicationAdditions.h"
 #import "NSStringAdditions.h"
 #import "PiecesView.h"
 #import "Torrent.h"
@@ -36,8 +37,6 @@
 @interface InfoActivityViewController (Private)
 
 - (void) setupInfo;
-
-- (void) updatePiecesView;
 
 @end
 
@@ -55,9 +54,7 @@
 
 - (void) awakeFromNib
 {
-    [[NSNotificationCenter defaultCenter] addObserver: self selector: @selector(updatePiecesView) name: @"UpdatePiecesView" object: nil];
-    
-    /*[fTransferSectionLabel sizeToFit];
+    [fTransferSectionLabel sizeToFit];
     [fDatesSectionLabel sizeToFit];
     [fTimeSectionLabel sizeToFit];
     
@@ -94,7 +91,12 @@
         frame.origin.x += widthIncrease;
         frame.size.width -= widthIncrease;
         [field setFrame: frame];
-    }*/
+    }
+    
+    //set the click action of the pieces view
+    #warning after 2.8 just hook this up in the xib
+    [fPiecesView setAction:@selector(updatePiecesView:)];
+    [fPiecesView setTarget:self];
 }
 
 - (void) dealloc
@@ -184,8 +186,23 @@
         //uses a relative date, so can't be set once
         [fDateAddedField setObjectValue: [torrent dateAdded]];
         
-        [fDownloadTimeField setStringValue: [NSString timeString: [torrent secondsDownloading] showSeconds: YES]];
-        [fSeedTimeField setStringValue: [NSString timeString: [torrent secondsSeeding] showSeconds: YES]];
+        if ([NSApp isOnYosemiteOrBetter]) {
+            static NSDateComponentsFormatter *timeFormatter;
+            static dispatch_once_t onceToken;
+            dispatch_once(&onceToken, ^{
+                timeFormatter = [NSDateComponentsFormatter new];
+                timeFormatter.unitsStyle = NSDateComponentsFormatterUnitsStyleShort;
+                timeFormatter.allowedUnits = NSCalendarUnitDay | NSCalendarUnitHour | NSCalendarUnitMinute | NSCalendarUnitSecond;
+                timeFormatter.zeroFormattingBehavior = NSDateComponentsFormatterZeroFormattingBehaviorDropLeading;
+            });
+            
+            [fDownloadTimeField setStringValue: [timeFormatter stringFromTimeInterval:[torrent secondsDownloading]]];
+            [fSeedTimeField setStringValue: [timeFormatter stringFromTimeInterval:[torrent secondsSeeding]]];
+        }
+        else {
+            [fDownloadTimeField setStringValue: [NSString timeString: [torrent secondsDownloading] includesTimeRemainingPhrase:NO showSeconds: YES]];
+            [fSeedTimeField setStringValue: [NSString timeString: [torrent secondsSeeding] includesTimeRemainingPhrase:NO showSeconds: YES]];
+        }
         
         [fPiecesView updateView];
     }
@@ -200,7 +217,18 @@
 {
     const BOOL availability = [sender selectedSegment] == PIECES_CONTROL_AVAILABLE;
     [[NSUserDefaults standardUserDefaults] setBool: availability forKey: @"PiecesViewShowAvailability"];
-    [self updatePiecesView];
+    [self updatePiecesView:nil];
+}
+
+
+- (void) updatePiecesView: (id) sender
+{
+    const BOOL piecesAvailableSegment = [[NSUserDefaults standardUserDefaults] boolForKey: @"PiecesViewShowAvailability"];
+    
+    [fPiecesControl setSelected: piecesAvailableSegment forSegment: PIECES_CONTROL_AVAILABLE];
+    [fPiecesControl setSelected: !piecesAvailableSegment forSegment: PIECES_CONTROL_PROGRESS];
+    
+    [fPiecesView updateView];
 }
 
 - (void) clearView
@@ -257,16 +285,6 @@
     }
     
     fSet = YES;
-}
-
-- (void) updatePiecesView
-{
-    const BOOL piecesAvailableSegment = [[NSUserDefaults standardUserDefaults] boolForKey: @"PiecesViewShowAvailability"];
-    
-    [fPiecesControl setSelected: piecesAvailableSegment forSegment: PIECES_CONTROL_AVAILABLE];
-    [fPiecesControl setSelected: !piecesAvailableSegment forSegment: PIECES_CONTROL_PROGRESS];
-    
-    [fPiecesView updateView];
 }
 
 @end

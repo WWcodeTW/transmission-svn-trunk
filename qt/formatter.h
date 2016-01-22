@@ -1,54 +1,58 @@
 /*
- * This file Copyright (C) Mnemosyne LLC
+ * This file Copyright (C) 2012-2015 Mnemosyne LLC
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2
- * as published by the Free Software Foundation.
+ * It may be used under the GNU GPL versions 2 or 3
+ * or any future license endorsed by Mnemosyne LLC.
  *
- * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
- *
- * $Id: formatter.h 12429 2011-05-12 20:21:27Z jordan $
+ * $Id: Formatter.h 14540 2015-06-12 22:41:36Z mikedld $
  */
 
-#ifndef QTR_UNITS
-#define QTR_UNITS
+#ifndef QTR_FORMATTER_H
+#define QTR_FORMATTER_H
 
-#include <inttypes.h> /* uint64_t */
+#include <cstdint> // int64_t
 
+#include <QCoreApplication>
 #include <QString>
-#include <QObject>
-#include <QIcon>
 
 class Speed;
 
-class Formatter: public QObject
+class Formatter
 {
-        Q_OBJECT
+    Q_DECLARE_TR_FUNCTIONS (Formatter)
 
-    public:
+  public:
+    enum Size
+    {
+      B,
+      KB,
+      MB,
+      GB,
+      TB
+    };
 
-        Formatter( ) { }
-        virtual ~Formatter( ) { }
+    enum Type
+    {
+      SPEED,
+      SIZE,
+      MEM
+    };
 
-    public:
+  public:
+    static QString memToString (int64_t bytes);
+    static QString sizeToString (int64_t bytes);
+    static QString speedToString (const Speed& speed);
+    static QString percentToString (double x);
+    static QString ratioToString (double ratio);
+    static QString timeToString (int seconds);
+    static QString uploadSpeedToString (const Speed& up);
+    static QString downloadSpeedToString (const Speed& down);
 
-        static QString memToString( int64_t bytes );
-        static QString sizeToString( int64_t bytes );
-        static QString speedToString( const Speed& speed );
-        static QString percentToString( double x );
-        static QString ratioToString( double ratio );
-        static QString timeToString( int seconds );
+    static QString unitStr (Type t, Size s) { return unitStrings[t][s]; }
+    static void initUnits ();
 
-    public:
-
-        typedef enum { B, KB, MB, GB, TB } Size;
-        typedef enum { SPEED, SIZE, MEM } Type;
-        static QString unitStr( Type t, Size s ) { return unitStrings[t][s]; }
-        static void initUnits( );
-
-    private:
-
-        static QString unitStrings[3][5];
+  private:
+    static QString unitStrings[3][5];
 };
 
-#endif
+#endif // QTR_FORMATTER_H

@@ -1,5 +1,5 @@
 /******************************************************************************
- * $Id: NSStringAdditions.m 13510 2012-09-22 16:09:52Z livings124 $
+ * $Id: NSStringAdditions.m 14341 2014-10-17 05:12:00Z livings124 $
  *
  * Copyright (c) 2005-2012 Transmission authors and contributors
  *
@@ -153,13 +153,17 @@
         return [NSString localizedStringWithFormat: @"%.1f%%", tr_truncd(progress * 100.0, 1)];
 }
 
-+ (NSString *) timeString: (uint64_t) seconds showSeconds: (BOOL) showSeconds
++ (NSString *) timeString: (uint64_t) seconds includesTimeRemainingPhrase: (BOOL) includesTimeRemainingPhrase showSeconds: (BOOL) showSeconds
 {
-    return [NSString timeString: seconds showSeconds: showSeconds maxFields: NSUIntegerMax];
+    return [NSString timeString: seconds
+    includesTimeRemainingPhrase: includesTimeRemainingPhrase
+                    showSeconds: showSeconds
+                      maxFields: NSUIntegerMax];
 }
 
-+ (NSString *) timeString: (uint64_t) seconds showSeconds: (BOOL) showSeconds maxFields: (NSUInteger) max
++ (NSString *) timeString: (uint64_t) seconds includesTimeRemainingPhrase: (BOOL) includesTimeRemainingPhrase showSeconds: (BOOL) showSeconds maxFields: (NSUInteger) max
 {
+    NSAssert(![NSApp isOnYosemiteOrBetter], @"you should be using NSDateComponentsFormatter on >= 10.10");
     NSParameterAssert(max > 0);
     
     NSMutableArray * timeArray = [NSMutableArray arrayWithCapacity: MIN(max, 5)];
@@ -200,7 +204,13 @@
     if (max > 0 && showSeconds)
         [timeArray addObject: [NSString stringWithFormat: NSLocalizedString(@"%u sec", "time string"), remaining]];
     
-    return [timeArray componentsJoinedByString: @" "];
+    NSString * timeString = [timeArray componentsJoinedByString: @" "];
+    
+    if (includesTimeRemainingPhrase) {
+        timeString = [NSString stringWithFormat: NSLocalizedString(@"%@ remaining", "time remaining string"), timeString];
+    }
+    
+    return timeString;
 }
 
 - (NSComparisonResult) compareNumeric: (NSString *) string
@@ -209,30 +219,31 @@
     return [self compare: string options: comparisonOptions range: NSMakeRange(0, [self length]) locale: [NSLocale currentLocale]];
 }
 
-- (NSArray *) betterComponentsSeparatedByCharactersInSet: (NSCharacterSet *) separator
+- (NSArray *) betterComponentsSeparatedByCharactersInSet: (NSCharacterSet *) separators
 {
     NSMutableArray * components = [NSMutableArray array];
     
-    NSUInteger i = 0;
-    while (i < [self length])
+    NSCharacterSet * includededCharSet = [separators invertedSet];
+    NSUInteger index = 0;
+    const NSUInteger fullLength = [self length];
+    do
     {
-        const NSRange range = [self rangeOfCharacterFromSet: separator options: 0 range: NSMakeRange(i, [self length]-i)];
+        const NSUInteger start = [self rangeOfCharacterFromSet: includededCharSet options: 0 range: NSMakeRange(index, fullLength - index)].location;
+        if (start == NSNotFound)
+            break;
         
-        if (range.location == NSNotFound)
+        const NSRange endRange = [self rangeOfCharacterFromSet: separators options: 0 range: NSMakeRange(start, fullLength - start)];
+        if (endRange.location == NSNotFound)
         {
-            [components addObject: [self substringFromIndex: i]];
+            [components addObject: [self substringFromIndex: start]];
             break;
         }
-        else if (range.location != i)
-        {
-            const NSUInteger length = range.location - i;
-            [components addObject: [self substringWithRange: NSMakeRange(i, length)]];
-            
-            i += length;
-        }
         
-        i += range.length;
+        [components addObject: [self substringWithRange: NSMakeRange(start, endRange.location - start)]];
+        
+        index = NSMaxRange(endRange);
     }
+    while (YES);
     
     return components;
 }

@@ -1,13 +1,10 @@
 /*
- * This file Copyright (C) Mnemosyne LLC
+ * This file Copyright (C) 2008-2014 Mnemosyne LLC
  *
- * This file is licensed by the GPL version 2. Works owned by the
- * Transmission project are granted a special exemption to clause 2(b)
- * so that the bulk of its code can remain under the MIT license.
- * This exemption does not extend to derived works not owned by
- * the Transmission project.
+ * It may be used under the GNU GPL versions 2 or 3
+ * or any future license endorsed by Mnemosyne LLC.
  *
- * $Id: session.h 12640 2011-08-07 19:24:33Z jordan $
+ * $Id: session.h 14581 2015-10-18 18:39:14Z mikedld $
  */
 
 #ifndef __TRANSMISSION__
@@ -21,23 +18,24 @@
 
 #ifndef UNUSED
  #ifdef __GNUC__
-  #define UNUSED __attribute__ ( ( unused ) )
+  #define UNUSED __attribute__ ((unused))
  #else
   #define UNUSED
  #endif
 #endif
 
 #include "bandwidth.h"
-#include "bencode.h"
 #include "bitfield.h"
+#include "net.h"
 #include "utils.h"
+#include "variant.h"
 
 typedef enum { TR_NET_OK, TR_NET_ERROR, TR_NET_WAIT } tr_tristate_t;
 
 typedef enum {
     TR_AUTO_SWITCH_UNUSED,
     TR_AUTO_SWITCH_ON,
-    TR_AUTO_SWITCH_OFF
+    TR_AUTO_SWITCH_OFF,
 } tr_auto_switch_state_t;
 
 enum
@@ -45,9 +43,7 @@ enum
   PEER_ID_LEN = 20
 };
 
-void tr_peerIdInit( uint8_t * setme );
-void tr_peerIdInitTor( tr_torrent * tor );
-void tr_peerIdInitSession( tr_session * session );
+void tr_peerIdInit (uint8_t * setme);
 
 struct event_base;
 struct evdns_base;
@@ -58,13 +54,12 @@ struct tr_announcer_udp;
 struct tr_bindsockets;
 struct tr_cache;
 struct tr_fdInfo;
-
-typedef void ( tr_web_config_func )( tr_session * session, void * curl_pointer, const char * url, void * user_data );
+struct tr_device_info;
 
 struct tr_turtle_info
 {
     /* TR_UP and TR_DOWN speed limits */
-    int speedLimit_Bps[2];
+    unsigned int speedLimit_Bps[2];
 
     /* is turtle mode on right now? */
     bool isEnabled;
@@ -82,7 +77,7 @@ struct tr_turtle_info
     tr_sched_day days;
 
     /* called when isEnabled changes */
-    tr_altSpeedFunc * callback;
+    tr_altSpeedFunc callback;
 
     /* the callback's user_data argument */
     void * callbackUserData;
@@ -103,9 +98,6 @@ struct tr_turtle_info
 /** @brief handle to an active libtransmission session */
 struct tr_session
 {
-    bool                         ipv6Enabled;
-    bool                         dhtDatIpv6Forced;
-    bool                         ipv6Listen;
     bool                         isPortRandom;
     bool                         isPexEnabled;
     bool                         isDHTEnabled;
@@ -113,8 +105,8 @@ struct tr_session
     bool                         isLPDEnabled;
     bool                         isBlocklistEnabled;
     bool                         isPrefetchEnabled;
-    bool                         isTorrentAddedScriptEnabled;
     bool                         isTorrentDoneScriptEnabled;
+    bool                         isClosing;
     bool                         isClosed;
     bool                         isIncompleteFileNamingEnabled;
     bool                         isRatioLimited;
@@ -123,19 +115,10 @@ struct tr_session
     bool                         pauseAddedTorrent;
     bool                         deleteSourceTorrent;
     bool                         scrapePausedTorrents;
-    bool                         prefetchMagnets;
-    bool                         dropInterruptedWebseeds;
-    bool                         blockListWebseeds;
 
-    int                          reverifyTorrents;
-    tr_cheatMode_t               cheatModeDefault;
-    tr_streamingMode_t           streamModeDefault;
-    int                          maxMagnetBadPiece;
-    int                          maxWebseeds;
-    int                          maxWebseedConnectFails;
-    int                          webseedTimeout;
+    uint8_t                      peer_id_ttl_hours;
 
-    tr_benc                      removedTorrents;
+    tr_variant                   removedTorrents;
 
     bool                         stalledEnabled;
     bool                         queueEnabled[2];
@@ -144,7 +127,7 @@ struct tr_session
 
     int                          umask;
 
-    int                          speedLimit_Bps[2];
+    unsigned int                 speedLimit_Bps[2];
     bool                         speedLimitEnabled[2];
 
     struct tr_turtle_info        turtle;
@@ -168,8 +151,8 @@ struct tr_session
 
     /* The UDP sockets used for the DHT and uTP. */
     tr_port                      udp_port;
-    int                          udp_socket;
-    int                          udp6_socket;
+    tr_socket_t                  udp_socket;
+    tr_socket_t                  udp6_socket;
     unsigned char *              udp6_bound;
     struct event                 *udp_event;
     struct event                 *udp6_event;
@@ -194,23 +177,16 @@ struct tr_session
     int                          torrentCount;
     tr_torrent *                 torrentList;
 
-    char *                       torrentAddedScript;
-
     char *                       torrentDoneScript;
 
-    char *                       tag;
     char *                       configDir;
-    char *                       downloadDir;
     char *                       resumeDir;
-    char *                       pieceDir;
     char *                       torrentDir;
     char *                       incompleteDir;
 
     char *                       blocklist_url;
 
-    char *                       clientVersionBep10;
-    char *                       peerIdPrefix;
-    char *                       userAgent;
+    struct tr_device_info *      downloadDir;
 
     struct tr_list *             blocklists;
     struct tr_peerMgr *          peerMgr;
@@ -231,10 +207,7 @@ struct tr_session
     struct tr_announcer        * announcer;
     struct tr_announcer_udp    * announcer_udp;
 
-    tr_benc                    * metainfoLookup;
-
-    tr_benc                      downloadGroups;
-    char *                       downloadGroupDefault;
+    tr_variant                 * metainfoLookup;
 
     struct event               * nowTimer;
     struct event               * saveTimer;
@@ -248,111 +221,111 @@ struct tr_session
 
     struct tr_bindinfo         * public_ipv4;
     struct tr_bindinfo         * public_ipv6;
-
-    uint8_t peer_id[PEER_ID_LEN+1];
 };
 
 static inline tr_port
-tr_sessionGetPublicPeerPort( const tr_session * session )
+tr_sessionGetPublicPeerPort (const tr_session * session)
 {
     return session->public_peer_port;
 }
 
-static inline const uint8_t*
-tr_getPeerId( tr_session * session )
-{
-    return session->peer_id;
-}
+bool         tr_sessionAllowsDHT (const tr_session * session);
 
-bool         tr_sessionAllowsDHT( const tr_session * session );
+bool         tr_sessionAllowsLPD (const tr_session * session);
 
-bool         tr_sessionAllowsLPD( const tr_session * session );
+const char * tr_sessionFindTorrentFile (const tr_session * session,
+                                        const char *       hashString);
 
-const char * tr_sessionFindTorrentFile( const tr_session * session,
-                                        const char *       hashString );
-
-void         tr_sessionSetTorrentFile( tr_session * session,
+void         tr_sessionSetTorrentFile (tr_session * session,
                                        const char * hashString,
-                                       const char * filename );
+                                       const char * filename);
 
-bool         tr_sessionIsAddressBlocked( const tr_session        * session,
-                                         const struct tr_address * addr );
+bool         tr_sessionIsAddressBlocked (const tr_session        * session,
+                                         const struct tr_address * addr);
 
-void         tr_sessionLock( tr_session * );
+void         tr_sessionLock (tr_session *);
 
-void         tr_sessionUnlock( tr_session * );
+void         tr_sessionUnlock (tr_session *);
 
-bool         tr_sessionIsLocked( const tr_session * );
+bool         tr_sessionIsLocked (const tr_session *);
 
-const struct tr_address*  tr_sessionGetPublicAddress( const tr_session  * session,
+const struct tr_address*  tr_sessionGetPublicAddress (const tr_session  * session,
                                                       int                 tr_af_type,
-                                                      bool              * is_default_value );
+                                                      bool              * is_default_value);
 
 
-struct tr_bindsockets * tr_sessionGetBindSockets( tr_session * );
+struct tr_bindsockets * tr_sessionGetBindSockets (tr_session *);
 
-int tr_sessionCountTorrents( const tr_session * session );
+int tr_sessionCountTorrents (const tr_session * session);
+
+tr_torrent ** tr_sessionGetTorrents (tr_session * session, int * setme_n);
 
 enum
 {
-    SESSION_MAGIC_NUMBER = 3845
+    SESSION_MAGIC_NUMBER = 3845,
 };
 
-static inline bool tr_isSession( const tr_session * session )
+static inline bool tr_isSession (const tr_session * session)
 {
-    return ( session != NULL ) && ( session->magicNumber == SESSION_MAGIC_NUMBER );
+    return (session != NULL) && (session->magicNumber == SESSION_MAGIC_NUMBER);
 }
 
-static inline bool tr_isPreallocationMode( tr_preallocation_mode m  )
+static inline bool tr_isPreallocationMode (tr_preallocation_mode m)
 {
-    return ( m == TR_PREALLOCATE_NONE )
-        || ( m == TR_PREALLOCATE_SPARSE )
-        || ( m == TR_PREALLOCATE_FULL );
+    return (m == TR_PREALLOCATE_NONE)
+        || (m == TR_PREALLOCATE_SPARSE)
+        || (m == TR_PREALLOCATE_FULL);
 }
 
-static inline bool tr_isEncryptionMode( tr_encryption_mode m )
+static inline bool tr_isEncryptionMode (tr_encryption_mode m)
 {
-    return ( m == TR_CLEAR_PREFERRED )
-        || ( m == TR_ENCRYPTION_PREFERRED )
-        || ( m == TR_ENCRYPTION_REQUIRED );
+    return (m == TR_CLEAR_PREFERRED)
+        || (m == TR_ENCRYPTION_PREFERRED)
+        || (m == TR_ENCRYPTION_REQUIRED);
 }
 
-static inline bool tr_isPriority( tr_priority_t p )
+static inline bool tr_isPriority (tr_priority_t p)
 {
-    return ( p == TR_PRI_LOW )
-        || ( p == TR_PRI_NORMAL )
-        || ( p == TR_PRI_HIGH );
+    return (p == TR_PRI_LOW)
+        || (p == TR_PRI_NORMAL)
+        || (p == TR_PRI_HIGH);
 }
 
 /***
 ****
 ***/
 
-static inline unsigned int toSpeedBytes ( unsigned int KBps ) { return KBps * tr_speed_K; }
-static inline double       toSpeedKBps  ( unsigned int Bps )  { return Bps / (double)tr_speed_K; }
+static inline unsigned int
+toSpeedBytes (unsigned int KBps) { return KBps * tr_speed_K; }
+static inline double
+toSpeedKBps (unsigned int Bps)  { return Bps / (double)tr_speed_K; }
 
-static inline uint64_t toMemBytes ( unsigned int MB ) { uint64_t B = tr_mem_K * tr_mem_K; B *= MB; return B; }
-static inline int      toMemMB    ( uint64_t B )      { return B / ( tr_mem_K * tr_mem_K ); }
+static inline uint64_t
+toMemBytes (unsigned int MB) { uint64_t B = tr_mem_K * tr_mem_K; B *= MB; return B; }
+static inline int
+toMemMB  (uint64_t B)      { return B / (tr_mem_K * tr_mem_K); }
 
 /**
 **/
 
-int  tr_sessionGetSpeedLimit_Bps( const tr_session *, tr_direction );
-int  tr_sessionGetAltSpeed_Bps  ( const tr_session *, tr_direction );
-int  tr_sessionGetRawSpeed_Bps  ( const tr_session *, tr_direction );
-int  tr_sessionGetPieceSpeed_Bps( const tr_session *, tr_direction );
+unsigned int  tr_sessionGetSpeedLimit_Bps (const tr_session *, tr_direction);
+unsigned int  tr_sessionGetAltSpeed_Bps (const tr_session *, tr_direction);
+unsigned int  tr_sessionGetRawSpeed_Bps (const tr_session *, tr_direction);
+unsigned int  tr_sessionGetPieceSpeed_Bps (const tr_session *, tr_direction);
 
-void tr_sessionSetSpeedLimit_Bps( tr_session *, tr_direction, int Bps );
-void tr_sessionSetAltSpeed_Bps  ( tr_session *, tr_direction, int Bps );
+void tr_sessionSetSpeedLimit_Bps (tr_session *, tr_direction, unsigned int Bps);
+void tr_sessionSetAltSpeed_Bps (tr_session *, tr_direction, unsigned int Bps);
 
-bool  tr_sessionGetActiveSpeedLimit_Bps( const tr_session  * session,
+bool  tr_sessionGetActiveSpeedLimit_Bps (const tr_session  * session,
                                          tr_direction        dir,
-                                         int               * setme );
+                                         unsigned int      * setme);
 
-tr_torrent * tr_sessionGetNextQueuedSeed( tr_session * session );
-tr_torrent * tr_sessionGetNextQueuedTorrent( tr_session * session, tr_direction );
+void tr_sessionGetNextQueuedTorrents (tr_session   * session,
+                                      tr_direction   dir,
+                                      size_t         numwanted,
+                                      tr_ptrArray  * setme);
 
-int tr_sessionCountQueueFreeSlots( tr_session * session, tr_direction );
+int tr_sessionCountQueueFreeSlots (tr_session * session, tr_direction);
 
 
 #endif

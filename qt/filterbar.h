@@ -1,99 +1,64 @@
 /*
- * This file Copyright (C) Mnemosyne LLC
+ * This file Copyright (C) 2010-2015 Mnemosyne LLC
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2
- * as published by the Free Software Foundation.
+ * It may be used under the GNU GPL versions 2 or 3
+ * or any future license endorsed by Mnemosyne LLC.
  *
- * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
- *
- * $Id: filterbar.h 11406 2010-11-14 05:03:38Z charles $
+ * $Id: FilterBar.h 14590 2015-10-24 20:56:45Z mikedld $
  */
 
-#ifndef QTR_FILTERBAR_H
-#define QTR_FILTERBAR_H
+#ifndef QTR_FILTER_BAR_H
+#define QTR_FILTER_BAR_H
 
-#include <QComboBox>
-#include <QItemDelegate>
 #include <QWidget>
 
-class QLineEdit;
-class QPaintEvent;
+class QLabel;
 class QStandardItemModel;
 class QTimer;
 
+class FilterBarComboBox;
+class FilterBarLineEdit;
 class Prefs;
 class TorrentFilter;
 class TorrentModel;
 
-class FilterBarComboBoxDelegate: public QItemDelegate
-{
-        Q_OBJECT
-
-    public:
-        FilterBarComboBoxDelegate( QObject * parent, QComboBox * combo );
-
-    public:
-        static bool isSeparator( const QModelIndex &index );
-        static void setSeparator( QAbstractItemModel * model, const QModelIndex& index );
-
-    protected:
-        virtual void paint( QPainter*, const QStyleOptionViewItem&, const QModelIndex& ) const;
-        virtual QSize sizeHint( const QStyleOptionViewItem&, const QModelIndex& ) const;
-
-    private:
-        QComboBox * myCombo;
-
-};
-
-class FilterBarComboBox: public QComboBox
-{
-        Q_OBJECT
-
-    public:
-        FilterBarComboBox( QWidget * parent = 0 );
-
-    protected:
-        virtual void paintEvent( QPaintEvent * e );
-};
-
-
 class FilterBar: public QWidget
 {
-        Q_OBJECT
+    Q_OBJECT
 
-    public:
-        FilterBar( Prefs& prefs, TorrentModel& torrents, TorrentFilter& filter, QWidget * parent = 0 );
-        ~FilterBar( );
+  public:
+    FilterBar (Prefs& prefs, const TorrentModel& torrents, const TorrentFilter& filter, QWidget * parent = nullptr);
+    virtual ~FilterBar ();
 
-    private:
-        QComboBox * createTrackerCombo( QStandardItemModel *  );
-        QComboBox * createActivityCombo( );
-        void recountSoon( );
-        void refreshTrackers( );
-        QString getCountString( int n ) const;
+  public slots:
+    void clear ();
 
-    private:
-        Prefs& myPrefs;
-        TorrentModel& myTorrents;
-        TorrentFilter& myFilter;
-        QComboBox * myActivityCombo;
-        QComboBox * myTrackerCombo;
-        QStandardItemModel * myTrackerModel;
-        QTimer * myRecountTimer;
-        bool myIsBootstrapping;
-        QLineEdit * myLineEdit;
+  private:
+    FilterBarComboBox * createTrackerCombo (QStandardItemModel *);
+    FilterBarComboBox * createActivityCombo ();
+    void refreshTrackers ();
+    QString getCountString (int n) const;
 
-    private slots:
-        void recount( );
-        void refreshPref( int key );
-        void onActivityIndexChanged( int index );
-        void onTrackerIndexChanged( int index );
-        void onTorrentModelReset( );
-        void onTorrentModelRowsInserted( const QModelIndex&, int, int );
-        void onTorrentModelRowsRemoved( const QModelIndex&, int, int );
-        void onTorrentModelDataChanged( const QModelIndex&, const QModelIndex& );
-        void onTextChanged( const QString& );
+  private slots:
+    void recountSoon ();
+    void recount ();
+    void refreshPref (int key);
+    void onActivityIndexChanged (int index);
+    void onTrackerIndexChanged (int index);
+    void onTextChanged (const QString&);
+
+  private:
+    Prefs& myPrefs;
+    const TorrentModel& myTorrents;
+    const TorrentFilter& myFilter;
+
+    FilterBarComboBox * myActivityCombo;
+    FilterBarComboBox * myTrackerCombo;
+    QLabel * myCountLabel;
+    QStandardItemModel * myTrackerModel;
+    QTimer * myRecountTimer;
+    bool myIsBootstrapping;
+    FilterBarLineEdit * myLineEdit;
 };
 
-#endif
+#endif // QTR_FILTER_BAR_H

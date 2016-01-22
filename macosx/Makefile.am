@@ -2,6 +2,7 @@ EXTRA_DIST = \
     Credits.rtf \
     AboutWindow.xib \
     BlocklistStatusWindow.xib \
+    FileRenameSheetController.xib \
     FilterBar.xib \
     InfoFileView.xib \
     InfoPeersView.xib \
@@ -17,9 +18,9 @@ EXTRA_DIST = \
     Growl.framework \
     Sparkle.framework \
     sparkle_dsa_pub.pem \
-    UKKQueue \
     TransmissionHelp \
     QuickLookPlugin \
+    VDKQueue \
     Images \
     da.lproj \
     de.lproj \
@@ -28,9 +29,9 @@ EXTRA_DIST = \
     fr.lproj \
     it.lproj \
     nl.lproj \
-    pt.lproj \
     pt_PT.lproj \
     ru.lproj \
+    tr.lproj \
     AboutWindowController.h \
     AboutWindowController.m \
     AddMagnetWindowController.h \
@@ -65,6 +66,8 @@ EXTRA_DIST = \
     ExpandedPathToIconTransformer.m \
     ExpandedPathToPathTransformer.h \
     ExpandedPathToPathTransformer.m \
+    FileRenameSheetController.h \
+    FileRenameSheetController.m \
     FileListNode.h \
     FileListNode.m \
     FileNameCell.h \
@@ -137,6 +140,10 @@ EXTRA_DIST = \
     PrefsWindow.m \
     ProgressGradients.h \
     ProgressGradients.m \
+    ShareToolbarItem.h \
+    ShareToolbarItem.m \
+    ShareTorrentFileHelper.h \
+    ShareTorrentFileHelper.m \
     StatsWindowController.h \
     StatsWindowController.m \
     StatusBarController.h \

@@ -1,5 +1,5 @@
 /******************************************************************************
- * $Id: InfoWindowController.m 13434 2012-08-13 00:52:04Z livings124 $
+ * $Id: InfoWindowController.m 14667 2016-01-08 10:05:19Z mikedld $
  *
  * Copyright (c) 2006-2012 Transmission authors and contributors
  *
@@ -297,7 +297,7 @@ typedef enum
     
     NSRect windowRect = [window frame], viewRect = [view frame];
     
-    const CGFloat difference = (NSHeight(viewRect) - oldHeight) * [window userSpaceScaleFactor];
+    const CGFloat difference = NSHeight(viewRect) - oldHeight;
     windowRect.origin.y -= difference;
     windowRect.size.height += difference;
     
@@ -308,7 +308,7 @@ typedef enum
             const CGFloat screenHeight = NSHeight([[window screen] visibleFrame]);
             if (NSHeight(windowRect) > screenHeight)
             {
-                const CGFloat difference = (screenHeight - NSHeight(windowRect)) * [window userSpaceScaleFactor];
+                const CGFloat difference = screenHeight - NSHeight(windowRect);
                 windowRect.origin.y -= difference;
                 windowRect.size.height += difference;
                 
@@ -543,7 +543,8 @@ typedef enum
 
 - (void) resetInfoForTorrent: (NSNotification *) notification
 {
-    if (fTorrents && [fTorrents containsObject: [notification object]])
+    Torrent * torrent = [[notification userInfo] objectForKey: @"Torrent"];
+    if (fTorrents && (!torrent || [fTorrents containsObject: torrent]))
         [self resetInfo];
 }
 

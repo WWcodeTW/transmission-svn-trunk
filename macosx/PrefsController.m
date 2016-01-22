@@ -1,5 +1,5 @@
 /******************************************************************************
- * $Id: PrefsController.m 13492 2012-09-10 02:37:29Z livings124 $
+ * $Id: PrefsController.m 14667 2016-01-08 10:05:19Z mikedld $
  *
  * Copyright (c) 2005-2012 Transmission authors and contributors
  *
@@ -30,7 +30,7 @@
 #import "BonjourController.h"
 #import "NSApplicationAdditions.h"
 #import "NSStringAdditions.h"
-#import "UKKQueue.h"
+#import "VDKQueue.h"
 
 #import "transmission.h"
 #import "utils.h"
@@ -108,7 +108,10 @@
         //set auto import
         NSString * autoPath;
         if ([fDefaults boolForKey: @"AutoImport"] && (autoPath = [fDefaults stringForKey: @"AutoImportDirectory"]))
-            [[UKKQueue sharedFileWatcher] addPath: [autoPath stringByExpandingTildeInPath]];
+            [[(Controller *)[NSApp delegate] fileWatcherQueue] addPath: [autoPath stringByExpandingTildeInPath] notifyingAbout: VDKQueueNotifyAboutWrite];
+        
+        //set special-handling of magnet link add window checkbox
+        [self updateShowAddMagnetWindowField];
         
         //set blocklist scheduler
         [[BlocklistScheduler scheduler] updateSchedule];
@@ -163,9 +166,8 @@
 - (void) awakeFromNib
 {
     fHasLoaded = YES;
-    
-    if ([NSApp isOnLionOrBetter])
-        [[self window] setRestorationClass: [self class]];
+
+    [[self window] setRestorationClass: [self class]];
     
     NSToolbar * toolbar = [[NSToolbar alloc] initWithIdentifier: @"Preferences Toolbar"];
     [toolbar setDelegate: self];
@@ -418,15 +420,15 @@
     {
         case PORT_STATUS_OPEN:
             [fPortStatusField setStringValue: NSLocalizedString(@"Port is open", "Preferences -> Network -> port status")];
-            [fPortStatusImage setImage: [NSImage imageNamed: @"GreenDot"]];
+            [fPortStatusImage setImage: [NSImage imageNamed: NSImageNameStatusAvailable]];
             break;
         case PORT_STATUS_CLOSED:
             [fPortStatusField setStringValue: NSLocalizedString(@"Port is closed", "Preferences -> Network -> port status")];
-            [fPortStatusImage setImage: [NSImage imageNamed: @"RedDot"]];
+            [fPortStatusImage setImage: [NSImage imageNamed: NSImageNameStatusUnavailable]];
             break;
         case PORT_STATUS_ERROR:
             [fPortStatusField setStringValue: NSLocalizedString(@"Port check site is down", "Preferences -> Network -> port status")];
-            [fPortStatusImage setImage: [NSImage imageNamed: @"YellowDot"]];
+            [fPortStatusImage setImage: [NSImage imageNamed: NSImageNameStatusPartiallyAvailable]];
             break;
         default:
             NSAssert1(NO, @"Port checker returned invalid status: %d", [fPortChecker status]);
@@ -820,6 +822,7 @@
 - (void) setDownloadLocation: (id) sender
 {
     [fDefaults setBool: [fFolderPopUp indexOfSelectedItem] == DOWNLOAD_FOLDER forKey: @"DownloadLocationConstant"];
+    [self updateShowAddMagnetWindowField];
 }
 
 - (void) folderSheetShow: (id) sender
@@ -839,7 +842,8 @@
             
             NSString * folder = [[[panel URLs] objectAtIndex: 0] path];
             [fDefaults setObject: folder forKey: @"DownloadFolder"];
-            [fDefaults setObject: @"Constant" forKey: @"DownloadChoice"];
+            [fDefaults setBool: YES forKey: @"DownloadLocationConstant"];
+            [self updateShowAddMagnetWindowField];
             
             tr_sessionSetDownloadDir(fHandle, [folder UTF8String]);
         }
@@ -908,6 +912,26 @@
     tr_sessionSetIncompleteFileNamingEnabled(fHandle, [fDefaults boolForKey: @"RenamePartialFiles"]);
 }
 
+- (void) setShowAddMagnetWindow: (id) sender
+{
+    [fDefaults setBool: ([fShowMagnetAddWindowCheck state] == NSOnState) forKey: @"MagnetOpenAsk"];
+}
+
+- (void) updateShowAddMagnetWindowField
+{
+    if (![fDefaults boolForKey: @"DownloadLocationConstant"])
+    {
+        //always show the add window for magnet links when the download location is the same as the torrent file
+        [fShowMagnetAddWindowCheck setState: NSOnState];
+        [fShowMagnetAddWindowCheck setEnabled: NO];
+    }
+    else
+    {
+        [fShowMagnetAddWindowCheck setState: [fDefaults boolForKey: @"MagnetOpenAsk"]];
+        [fShowMagnetAddWindowCheck setEnabled: YES];
+    }
+}
+
 - (void) setDoneScriptEnabled: (id) sender
 {
     if ([fDefaults boolForKey: @"DoneScriptEnabled"] && ![[NSFileManager defaultManager] fileExistsAtPath: [fDefaults stringForKey:@"DoneScriptPath"]])
@@ -924,11 +948,14 @@
     NSString * path;
     if ((path = [fDefaults stringForKey: @"AutoImportDirectory"]))
     {
-        path = [path stringByExpandingTildeInPath];
+        VDKQueue * watcherQueue = [(Controller *)[NSApp delegate] fileWatcherQueue];
         if ([fDefaults boolForKey: @"AutoImport"])
-            [[UKKQueue sharedFileWatcher] addPath: path];
+        {
+            path = [path stringByExpandingTildeInPath];
+            [watcherQueue addPath: path notifyingAbout: VDKQueueNotifyAboutWrite];
+        }
         else
-            [[UKKQueue sharedFileWatcher] removePathFromQueue: path];
+            [watcherQueue removeAllPaths];
         
         [[NSNotificationCenter defaultCenter] postNotificationName: @"AutoImportSettingChange" object: self];
     }
@@ -947,21 +974,23 @@
     [panel setCanCreateDirectories: YES];
 
     [panel beginSheetModalForWindow: [self window] completionHandler: ^(NSInteger result) {
-        NSString * path = [fDefaults stringForKey: @"AutoImportDirectory"];
         if (result == NSFileHandlingPanelOKButton)
         {
-            UKKQueue * sharedQueue = [UKKQueue sharedFileWatcher];
-            if (path)
-                [sharedQueue removePathFromQueue: [path stringByExpandingTildeInPath]];
+            VDKQueue * watcherQueue = [(Controller *)[NSApp delegate] fileWatcherQueue];
+            [watcherQueue removeAllPaths];
             
-            path = [[[panel URLs] objectAtIndex: 0] path];
+            NSString * path = [[[panel URLs] objectAtIndex: 0] path];
             [fDefaults setObject: path forKey: @"AutoImportDirectory"];
-            [sharedQueue addPath: [path stringByExpandingTildeInPath]];
+            [watcherQueue addPath: [path stringByExpandingTildeInPath] notifyingAbout: VDKQueueNotifyAboutWrite];
             
             [[NSNotificationCenter defaultCenter] postNotificationName: @"AutoImportSettingChange" object: self];
         }
-        else if (!path)
-            [fDefaults setBool: NO forKey: @"AutoImport"];
+        else
+        {
+            NSString * path = [fDefaults stringForKey: @"AutoImportDirectory"];
+            if (!path)
+                [fDefaults setBool: NO forKey: @"AutoImport"];
+        }
         
         [fImportFolderPopUp selectItemAtIndex: 0];
     }];
@@ -1433,7 +1462,7 @@
         return;
     
     NSRect windowRect = [window frame];
-    const CGFloat difference = (NSHeight([view frame]) - NSHeight([[window contentView] frame])) * [window userSpaceScaleFactor];
+    const CGFloat difference = NSHeight([view frame]) - NSHeight([[window contentView] frame]);
     windowRect.origin.y -= difference;
     windowRect.size.height += difference;
     

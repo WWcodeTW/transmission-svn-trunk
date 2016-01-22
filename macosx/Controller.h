@@ -1,5 +1,5 @@
 /******************************************************************************
- * $Id: Controller.h 13414 2012-07-25 12:49:11Z livings124 $
+ * $Id: Controller.h 14662 2016-01-06 11:05:37Z mikedld $
  *
  * Copyright (c) 2005-2012 Transmission authors and contributors
  *
@@ -26,6 +26,7 @@
 #import <transmission.h>
 #import <Quartz/Quartz.h>
 #import <Growl/Growl.h>
+#import "VDKQueue.h"
 
 @class AddMagnetWindowController;
 @class AddWindowController;
@@ -49,7 +50,7 @@ typedef enum
     ADD_CREATED
 } addType;
 
-@interface Controller : NSObject <GrowlApplicationBridgeDelegate, NSURLDownloadDelegate, NSUserNotificationCenterDelegate, NSPopoverDelegate, NSSoundDelegate, NSToolbarDelegate, NSWindowDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate>
+@interface Controller : NSObject <GrowlApplicationBridgeDelegate, NSURLDownloadDelegate, NSUserNotificationCenterDelegate, NSPopoverDelegate, NSSharingServiceDelegate, NSSharingServicePickerDelegate, NSSoundDelegate, NSToolbarDelegate, NSWindowDelegate, QLPreviewPanelDataSource, QLPreviewPanelDelegate, VDKQueueDelegate>
 {
     tr_session                      * fLib;
     
@@ -70,6 +71,8 @@ typedef enum
     io_connect_t                    fRootPort;
     NSTimer                         * fTimer;
     
+    VDKQueue                        * fFileWatcherQueue;
+    
     IBOutlet NSMenuItem             * fOpenIgnoreDownloadFolder;
     IBOutlet NSButton               * fActionButton, * fSpeedLimitButton, * fClearCompletedButton;
     IBOutlet NSTextField            * fTotalTorrentsField;
@@ -83,16 +86,10 @@ typedef enum
     
     IBOutlet NSMenu                 * fSortMenu;
     
-    IBOutlet NSMenu                 * fActionMenu;
-    
-    IBOutlet NSMenu                 * fUploadMenu, * fDownloadMenu;
-    IBOutlet NSMenuItem             * fUploadLimitItem, * fUploadNoLimitItem,
-                                    * fDownloadLimitItem, * fDownloadNoLimitItem;
-    
-    IBOutlet NSMenu                 * fRatioStopMenu;
-    IBOutlet NSMenuItem             * fCheckRatioItem, * fNoCheckRatioItem;
-    
     IBOutlet NSMenu                 * fGroupsSetMenu, * fGroupsSetContextMenu;
+    
+    IBOutlet NSMenu                 * fShareMenu, * fShareContextMenu;
+    IBOutlet NSMenuItem             * fShareMenuItem, * fShareContextMenuItem; // remove when dropping 10.6
     
     QLPreviewPanel                  * fPreviewPanel;
     BOOL                            fQuitting;
@@ -170,10 +167,14 @@ typedef enum
 
 - (void) revealFile: (id) sender;
 
+- (IBAction) renameSelected: (id) sender;
+
 - (void) announceSelectedTorrents: (id) sender;
 
 - (void) verifySelectedTorrents: (id) sender;
 - (void) verifyTorrents: (NSArray *) torrents;
+
+- (NSArray *)selectedTorrents;
 
 @property (retain, readonly) PrefsController * prefsController;
 - (void) showPreferenceWindow: (id) sender;
@@ -220,12 +221,6 @@ typedef enum
 - (void) speedLimitChanged: (id) sender;
 - (void) altSpeedToggledCallbackIsLimited: (NSDictionary *) dict;
 
-- (void) setLimitGlobalEnabled: (id) sender;
-- (void) setQuickLimitGlobal: (id) sender;
-
-- (void) setRatioGlobalEnabled: (id) sender;
-- (void) setQuickRatioGlobal: (id) sender;
-
 - (void) changeAutoImport;
 - (void) checkAutoImportDirectory;
 
@@ -233,12 +228,13 @@ typedef enum
 
 - (void) sleepCallback: (natural_t) messageType argument: (void *) messageArgument;
 
+@property (retain, readonly) VDKQueue * fileWatcherQueue;
+
 - (void) torrentTableViewSelectionDidChange: (NSNotification *) notification;
 
 - (void) toggleSmallView: (id) sender;
 - (void) togglePiecesBar: (id) sender;
 - (void) toggleAvailabilityBar: (id) sender;
-- (void) toggleStatusString: (id) sender;
 
 - (void) toggleStatusBar: (id) sender;
 - (void) showStatusBar: (BOOL) show animate: (BOOL) animate;
@@ -267,9 +263,8 @@ typedef enum
 - (void) linkDonate: (id) sender;
 
 - (void) rpcCallback: (tr_rpc_callback_type) type forTorrentStruct: (struct tr_torrent *) torrentStruct;
-- (void) rpcAddTorrentStruct: (NSValue *) torrentStructPtr;
-- (void) rpcRemoveTorrent: (Torrent *) torrent;
-- (void) rpcRemoveTorrentDeleteData: (Torrent *) torrent;
+- (void) rpcAddTorrentStruct: (struct tr_torrent *) torrentStruct;
+- (void) rpcRemoveTorrent: (Torrent *) torrent deleteData: (BOOL) deleteData;
 - (void) rpcStartedStoppedTorrent: (Torrent *) torrent;
 - (void) rpcChangedTorrent: (Torrent *) torrent;
 - (void) rpcMovedTorrent: (Torrent *) torrent;

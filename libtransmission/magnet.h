@@ -1,13 +1,10 @@
 /*
- * This file Copyright (C) Mnemosyne LLC
+ * This file Copyright (C) 2010-2014 Mnemosyne LLC
  *
- * This file is licensed by the GPL version 2. Works owned by the
- * Transmission project are granted a special exemption to clause 2(b)
- * so that the bulk of its code can remain under the MIT license.
- * This exemption does not extend to derived works not owned by
- * the Transmission project.
+ * It may be used under the GNU GPL versions 2 or 3
+ * or any future license endorsed by Mnemosyne LLC.
  *
- * $Id: magnet.h 11709 2011-01-19 13:48:47Z jordan $
+ * $Id: magnet.h 14241 2014-01-21 03:10:30Z jordan $
  */
 
 #ifndef __TRANSMISSION__
@@ -18,27 +15,28 @@
 #define TR_MAGNET_H 1
 
 #include "transmission.h"
+#include "variant.h"
 
 typedef struct tr_magnet_info
 {
-    uint8_t hash[20];
+  uint8_t hash[20];
 
-    char * displayName;
+  char * displayName;
 
-    int trackerCount;
-    char ** trackers;
+  int trackerCount;
+  char ** trackers;
 
-    int webseedCount;
-    char ** webseeds;
+  int webseedCount;
+  char ** webseeds;
 }
 tr_magnet_info;
 
-tr_magnet_info * tr_magnetParse( const char * uri );
+tr_magnet_info * tr_magnetParse (const char * uri);
 
-struct tr_benc;
+struct tr_variant;
 
-void tr_magnetCreateMetainfo( const tr_magnet_info *, struct tr_benc * );
+void tr_magnetCreateMetainfo (const tr_magnet_info *, tr_variant *);
 
-void tr_magnetFree( tr_magnet_info * info );
+void tr_magnetFree (tr_magnet_info * info);
 
 #endif

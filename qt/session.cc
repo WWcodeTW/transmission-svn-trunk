@@ -1,13 +1,10 @@
 /*
- * This file Copyright (C) Mnemosyne LLC
+ * This file Copyright (C) 2009-2015 Mnemosyne LLC
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2
- * as published by the Free Software Foundation.
+ * It may be used under the GNU GPL versions 2 or 3
+ * or any future license endorsed by Mnemosyne LLC.
  *
- * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
- *
- * $Id: session.cc 13448 2012-08-19 16:12:20Z jordan $
+ * $Id: Session.cc 14581 2015-10-18 18:39:14Z mikedld $
  */
 
 #include <cassert>
@@ -17,53 +14,41 @@
 #include <QByteArray>
 #include <QClipboard>
 #include <QCoreApplication>
+#include <QDebug>
 #include <QDesktopServices>
+#include <QFile>
+#include <QFileInfo>
 #include <QMessageBox>
-#include <QNetworkProxy>
-#include <QNetworkProxyFactory>
-#include <QNetworkReply>
-#include <QNetworkRequest>
-#include <QSet>
-#include <QStringList>
 #include <QStyle>
 #include <QTextStream>
 
-#include <curl/curl.h>
-
-#include <event2/buffer.h>
-
 #include <libtransmission/transmission.h>
-#include <libtransmission/bencode.h>
-#include <libtransmission/json.h>
-#include <libtransmission/rpcimpl.h>
 #include <libtransmission/utils.h> // tr_free
-#include <libtransmission/version.h> // LONG_VERSION
-#include <libtransmission/web.h>
+#include <libtransmission/variant.h>
 
-#include "add-data.h"
-#include "prefs.h"
-#include "session.h"
-#include "session-dialog.h"
-#include "torrent.h"
-#include "utils.h"
-
-// #define DEBUG_HTTP
+#include "AddData.h"
+#include "Prefs.h"
+#include "Session.h"
+#include "SessionDialog.h"
+#include "Torrent.h"
+#include "Utils.h"
 
 namespace
 {
-    enum
-    {
-        TAG_SOME_TORRENTS,
-        TAG_ALL_TORRENTS,
-        TAG_SESSION_STATS,
-        TAG_SESSION_INFO,
-        TAG_BLOCKLIST_UPDATE,
-        TAG_ADD_TORRENT,
-        TAG_PORT_TEST,
-        TAG_MAGNET_LINK,
+  enum
+  {
+    TAG_SOME_TORRENTS,
+    TAG_ALL_TORRENTS,
+    TAG_SESSION_STATS,
+    TAG_SESSION_INFO,
+    TAG_BLOCKLIST_UPDATE,
+    TAG_ADD_TORRENT,
+    TAG_PORT_TEST,
+    TAG_MAGNET_LINK,
+    TAG_RENAME_PATH,
 
-        FIRST_UNIQUE_TAG
-    };
+    FIRST_UNIQUE_TAG
+  };
 }
 
 /***
@@ -72,18 +57,18 @@ namespace
 
 namespace
 {
-    typedef Torrent::KeyList KeyList;
-    const KeyList& getInfoKeys( ) { return Torrent::getInfoKeys( ); }
-    const KeyList& getStatKeys( ) { return Torrent::getStatKeys( ); }
-    const KeyList& getExtraStatKeys( ) { return Torrent::getExtraStatKeys( ); }
+  typedef Torrent::KeyList KeyList;
+  const KeyList& getInfoKeys () { return Torrent::getInfoKeys (); }
+  const KeyList& getStatKeys () { return Torrent::getStatKeys (); }
+  const KeyList& getExtraStatKeys () { return Torrent::getExtraStatKeys (); }
 
-    void
-    addList( tr_benc * list, const KeyList& strings )
-    {
-        tr_bencListReserve( list, strings.size( ) );
-        foreach( const char * str, strings )
-            tr_bencListAddStr( list, str );
-    }
+  void
+  addList (tr_variant * list, const KeyList& keys)
+  {
+    tr_variantListReserve (list, keys.size ());
+    for (const tr_quark key: keys)
+      tr_variantListAddQuark (list, key);
+  }
 }
 
 /***
@@ -91,280 +76,306 @@ namespace
 ***/
 
 void
-Session :: sessionSet( const char * key, const QVariant& value )
+FileAdded::executed (int64_t tag, const QString& result, tr_variant * arguments)
 {
-    tr_benc top;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "session-set" );
-    tr_benc * args( tr_bencDictAddDict( &top, "arguments", 1 ) );
-    switch( value.type( ) ) {
-        case QVariant::Bool:   tr_bencDictAddBool ( args, key, value.toBool() ); break;
-        case QVariant::Int:    tr_bencDictAddInt  ( args, key, value.toInt() ); break;
-        case QVariant::Double: tr_bencDictAddReal ( args, key, value.toDouble() ); break;
-        case QVariant::String: tr_bencDictAddStr  ( args, key, value.toString().toUtf8().constData() ); break;
-        default: assert( "unknown type" );
-    }
-    exec( &top );
-    tr_bencFree( &top );
-}
+  if (tag != myTag)
+    return;
 
-void
-Session :: portTest( )
-{
-    tr_benc top;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "port-test" );
-    tr_bencDictAddInt( &top, "tag", TAG_PORT_TEST );
-    exec( &top );
-    tr_bencFree( &top );
-}
-
-void
-Session :: copyMagnetLinkToClipboard( int torrentId )
-{
-    tr_benc top;
-    tr_bencInitDict( &top, 3 );
-    tr_bencDictAddStr( &top, "method", "torrent-get" );
-    tr_bencDictAddInt( &top, "tag", TAG_MAGNET_LINK );
-    tr_benc * args = tr_bencDictAddDict( &top, "arguments", 2 );
-    tr_bencListAddInt( tr_bencDictAddList( args, "ids", 1 ), torrentId );
-    tr_bencListAddStr( tr_bencDictAddList( args, "fields", 1 ), "magnetLink" );
-
-    exec( &top );
-    tr_bencFree( &top );
-}
-
-void
-Session :: updatePref( int key )
-{
-    if( myPrefs.isCore( key ) ) switch( key )
+  if (result == QLatin1String ("success"))
     {
-        case Prefs :: ALT_SPEED_LIMIT_DOWN:
-        case Prefs :: ALT_SPEED_LIMIT_ENABLED:
-        case Prefs :: ALT_SPEED_LIMIT_TIME_BEGIN:
-        case Prefs :: ALT_SPEED_LIMIT_TIME_DAY:
-        case Prefs :: ALT_SPEED_LIMIT_TIME_ENABLED:
-        case Prefs :: ALT_SPEED_LIMIT_TIME_END:
-        case Prefs :: ALT_SPEED_LIMIT_UP:
-        case Prefs :: BLOCKLIST_DATE:
-        case Prefs :: BLOCKLIST_ENABLED:
-        case Prefs :: BLOCKLIST_URL:
-        case Prefs :: DHT_ENABLED:
-        case Prefs :: DOWNLOAD_DIR:
-        case Prefs :: DOWNLOAD_QUEUE_ENABLED:
-        case Prefs :: DOWNLOAD_QUEUE_SIZE:
-        case Prefs :: DSPEED:
-        case Prefs :: DSPEED_ENABLED:
-        case Prefs :: IDLE_LIMIT:
-        case Prefs :: IDLE_LIMIT_ENABLED:
-        case Prefs :: INCOMPLETE_DIR:
-        case Prefs :: INCOMPLETE_DIR_ENABLED:
-        case Prefs :: LPD_ENABLED:
-        case Prefs :: PEER_LIMIT_GLOBAL:
-        case Prefs :: PEER_LIMIT_TORRENT:
-        case Prefs :: PEER_PORT:
-        case Prefs :: PEER_PORT_RANDOM_ON_START:
-        case Prefs :: QUEUE_STALLED_MINUTES:
-        case Prefs :: PEX_ENABLED:
-        case Prefs :: PORT_FORWARDING:
-        case Prefs :: RENAME_PARTIAL_FILES:
-        case Prefs :: SCRIPT_TORRENT_DONE_ENABLED:
-        case Prefs :: SCRIPT_TORRENT_DONE_FILENAME:
-        case Prefs :: START:
-        case Prefs :: TRASH_ORIGINAL:
-        case Prefs :: USPEED:
-        case Prefs :: USPEED_ENABLED:
-        case Prefs :: UTP_ENABLED:
-            sessionSet( myPrefs.keyStr(key), myPrefs.variant(key) );
-            break;
+      tr_variant * dup;
+      const char * str;
+      if (tr_variantDictFindDict (arguments, TR_KEY_torrent_duplicate, &dup) &&
+          tr_variantDictFindStr (dup, TR_KEY_name, &str, NULL))
+        {
+          const QString myFilename = QFileInfo (myName).fileName ();
+          const QString name = QString::fromUtf8 (str);
+          QMessageBox::warning (qApp->activeWindow (),
+                                tr ("Add Torrent"),
+                                tr ("<p><b>Unable to add \"%1\".</b></p><p>It is a duplicate of \"%2\" which is already added.</p>").arg (myFilename).arg (name));
+        }
 
-        case Prefs :: RATIO:
-            sessionSet( "seedRatioLimit", myPrefs.variant(key) );
-            break;
-        case Prefs :: RATIO_ENABLED:
-            sessionSet( "seedRatioLimited", myPrefs.variant(key) );
-            break;
+      if (!myDelFile.isEmpty ())
+        {
+          QFile file (myDelFile);
+          file.setPermissions (QFile::ReadOwner | QFile::WriteOwner);
+          file.remove ();
+        }
+    }
+  else
+    {
+      QString text = result;
 
-        case Prefs :: ENCRYPTION:
+      for (int i=0, n=text.size (); i<n; ++i)
+        if (!i || text[i-1].isSpace ())
+          text[i] = text[i].toUpper ();
+
+      QMessageBox::warning (qApp->activeWindow (),
+                            tr ("Error Adding Torrent"),
+                            QString::fromLatin1 ("<p><b>%1</b></p><p>%2</p>").arg (text).arg (myName));
+    }
+
+  deleteLater ();
+}
+
+/***
+****
+***/
+
+void
+Session::sessionSet (const tr_quark key, const QVariant& value)
+{
+  tr_variant args;
+  tr_variantInitDict (&args, 1);
+  switch (value.type ())
+    {
+      case QVariant::Bool:   tr_variantDictAddBool (&args, key, value.toBool ()); break;
+      case QVariant::Int:    tr_variantDictAddInt (&args, key, value.toInt ()); break;
+      case QVariant::Double: tr_variantDictAddReal (&args, key, value.toDouble ()); break;
+      case QVariant::String: tr_variantDictAddStr (&args, key, value.toString ().toUtf8 ().constData ()); break;
+      default:               assert ("unknown type");
+    }
+
+  exec ("session-set", &args);
+}
+
+void
+Session::portTest ()
+{
+  exec ("port-test", nullptr, TAG_PORT_TEST);
+}
+
+void
+Session::copyMagnetLinkToClipboard (int torrentId)
+{
+  tr_variant args;
+  tr_variantInitDict (&args, 2);
+  tr_variantListAddInt (tr_variantDictAddList (&args, TR_KEY_ids, 1), torrentId);
+  tr_variantListAddStr (tr_variantDictAddList (&args, TR_KEY_fields, 1), "magnetLink");
+
+  exec (TR_KEY_torrent_get, &args, TAG_MAGNET_LINK);
+}
+
+void
+Session::updatePref (int key)
+{
+  if (myPrefs.isCore (key)) switch (key)
+    {
+      case Prefs::ALT_SPEED_LIMIT_DOWN:
+      case Prefs::ALT_SPEED_LIMIT_ENABLED:
+      case Prefs::ALT_SPEED_LIMIT_TIME_BEGIN:
+      case Prefs::ALT_SPEED_LIMIT_TIME_DAY:
+      case Prefs::ALT_SPEED_LIMIT_TIME_ENABLED:
+      case Prefs::ALT_SPEED_LIMIT_TIME_END:
+      case Prefs::ALT_SPEED_LIMIT_UP:
+      case Prefs::BLOCKLIST_DATE:
+      case Prefs::BLOCKLIST_ENABLED:
+      case Prefs::BLOCKLIST_URL:
+      case Prefs::DHT_ENABLED:
+      case Prefs::DOWNLOAD_QUEUE_ENABLED:
+      case Prefs::DOWNLOAD_QUEUE_SIZE:
+      case Prefs::DSPEED:
+      case Prefs::DSPEED_ENABLED:
+      case Prefs::IDLE_LIMIT:
+      case Prefs::IDLE_LIMIT_ENABLED:
+      case Prefs::INCOMPLETE_DIR:
+      case Prefs::INCOMPLETE_DIR_ENABLED:
+      case Prefs::LPD_ENABLED:
+      case Prefs::PEER_LIMIT_GLOBAL:
+      case Prefs::PEER_LIMIT_TORRENT:
+      case Prefs::PEER_PORT:
+      case Prefs::PEER_PORT_RANDOM_ON_START:
+      case Prefs::QUEUE_STALLED_MINUTES:
+      case Prefs::PEX_ENABLED:
+      case Prefs::PORT_FORWARDING:
+      case Prefs::RENAME_PARTIAL_FILES:
+      case Prefs::SCRIPT_TORRENT_DONE_ENABLED:
+      case Prefs::SCRIPT_TORRENT_DONE_FILENAME:
+      case Prefs::START:
+      case Prefs::TRASH_ORIGINAL:
+      case Prefs::USPEED:
+      case Prefs::USPEED_ENABLED:
+      case Prefs::UTP_ENABLED:
+        sessionSet (myPrefs.getKey (key), myPrefs.variant (key));
+        break;
+
+      case Prefs::DOWNLOAD_DIR:
+        sessionSet (myPrefs.getKey (key), myPrefs.variant (key));
+        /* this will change the 'freespace' argument, so refresh */
+        refreshSessionInfo ();
+        break;
+
+      case Prefs::RATIO:
+        sessionSet (TR_KEY_seedRatioLimit, myPrefs.variant (key));
+        break;
+      case Prefs::RATIO_ENABLED:
+        sessionSet (TR_KEY_seedRatioLimited, myPrefs.variant (key));
+        break;
+
+      case Prefs::ENCRYPTION:
+        {
+          const int i = myPrefs.variant (key).toInt ();
+          switch (i)
             {
-                const int i = myPrefs.variant(key).toInt();
-                switch( i )
-                {
-                    case 0:
-                        sessionSet( myPrefs.keyStr(key), "tolerated" );
-                        break;
-                    case 1:
-                        sessionSet( myPrefs.keyStr(key), "preferred" );
-                        break;
-                    case 2:
-                        sessionSet( myPrefs.keyStr(key), "required" );
-                        break;
-                }
+              case 0:
+                sessionSet (myPrefs.getKey (key), QLatin1String ("tolerated"));
+                break;
+              case 1:
+                sessionSet (myPrefs.getKey (key), QLatin1String ("preferred"));
+                break;
+              case 2:
+                sessionSet (myPrefs.getKey (key), QLatin1String ("required"));
                 break;
             }
-
-        case Prefs :: RPC_AUTH_REQUIRED:
-            if( mySession )
-                tr_sessionSetRPCPasswordEnabled( mySession, myPrefs.getBool(key) );
-            break;
-        case Prefs :: RPC_ENABLED:
-            if( mySession )
-                tr_sessionSetRPCEnabled( mySession, myPrefs.getBool(key) );
-            break;
-        case Prefs :: RPC_PASSWORD:
-            if( mySession )
-                tr_sessionSetRPCPassword( mySession, myPrefs.getString(key).toUtf8().constData() );
-            break;
-        case Prefs :: RPC_PORT:
-            if( mySession )
-                tr_sessionSetRPCPort( mySession, myPrefs.getInt(key) );
-            break;
-        case Prefs :: RPC_USERNAME:
-            if( mySession )
-                tr_sessionSetRPCUsername( mySession, myPrefs.getString(key).toUtf8().constData() );
-            break;
-        case Prefs :: RPC_WHITELIST_ENABLED:
-            if( mySession )
-                tr_sessionSetRPCWhitelistEnabled( mySession, myPrefs.getBool(key) );
-            break;
-        case Prefs :: RPC_WHITELIST:
-            if( mySession )
-                tr_sessionSetRPCWhitelist( mySession, myPrefs.getString(key).toUtf8().constData() );
-            break;
-
-        default:
-            std::cerr << "unhandled pref: " << key << std::endl;
-    }
-}
-
-/***
-****
-***/
-
-Session :: Session( const char * configDir, Prefs& prefs ):
-    nextUniqueTag( FIRST_UNIQUE_TAG ),
-    myBlocklistSize( -1 ),
-    myPrefs( prefs ),
-    mySession( 0 ),
-    myConfigDir( QString::fromUtf8( configDir ) ),
-    myNAM( 0 )
-{
-    myStats.ratio = TR_RATIO_NA;
-    myStats.uploadedBytes = 0;
-    myStats.downloadedBytes = 0;
-    myStats.filesAdded = 0;
-    myStats.sessionCount = 0;
-    myStats.secondsActive = 0;
-    myCumulativeStats = myStats;
-
-    connect( &myPrefs, SIGNAL(changed(int)), this, SLOT(updatePref(int)) );
-}
-
-Session :: ~Session( )
-{
-    stop( );
-}
-
-QNetworkAccessManager *
-Session :: networkAccessManager( )
-{
-    if( myNAM == 0 )
-    {
-        myNAM = new QNetworkAccessManager;
-
-        connect( myNAM, SIGNAL(finished(QNetworkReply*)),
-                 this, SLOT(onFinished(QNetworkReply*)) );
-
-        connect( myNAM, SIGNAL(authenticationRequired(QNetworkReply*,QAuthenticator*)),
-                 this, SIGNAL(httpAuthenticationRequired()) );
-    }
-
-    return myNAM;
-}
-
-/***
-****
-***/
-
-void
-Session :: stop( )
-{
-    if( myNAM != 0 )
-    {
-        myNAM->deleteLater( );
-        myNAM = 0;
-    }
-
-    myUrl.clear( );
-
-    if( mySession )
-    {
-        tr_sessionClose( mySession );
-        mySession = 0;
-    }
-}
-
-void
-Session :: restart( )
-{
-    stop( );
-    start( );
-}
-
-void
-Session :: start( )
-{
-    if( myPrefs.get<bool>(Prefs::SESSION_IS_REMOTE) )
-    {
-        QUrl url;
-        url.setScheme( "http" );
-        url.setHost( myPrefs.get<QString>(Prefs::SESSION_REMOTE_HOST) );
-        url.setPort( myPrefs.get<int>(Prefs::SESSION_REMOTE_PORT) );
-        url.setPath( "/transmission/rpc" );
-        if( myPrefs.get<bool>(Prefs::SESSION_REMOTE_AUTH) )
-        {
-            url.setUserName( myPrefs.get<QString>(Prefs::SESSION_REMOTE_USERNAME) );
-            url.setPassword( myPrefs.get<QString>(Prefs::SESSION_REMOTE_PASSWORD) );
+          break;
         }
-        myUrl = url;
+
+      case Prefs::RPC_AUTH_REQUIRED:
+        if (mySession)
+          tr_sessionSetRPCPasswordEnabled (mySession, myPrefs.getBool (key));
+        break;
+
+      case Prefs::RPC_ENABLED:
+        if (mySession)
+          tr_sessionSetRPCEnabled (mySession, myPrefs.getBool (key));
+        break;
+
+      case Prefs::RPC_PASSWORD:
+        if (mySession)
+          tr_sessionSetRPCPassword (mySession, myPrefs.getString (key).toUtf8 ().constData ());
+        break;
+
+      case Prefs::RPC_PORT:
+        if (mySession)
+          tr_sessionSetRPCPort (mySession, myPrefs.getInt (key));
+        break;
+
+      case Prefs::RPC_USERNAME:
+        if (mySession)
+          tr_sessionSetRPCUsername (mySession, myPrefs.getString (key).toUtf8 ().constData ());
+        break;
+
+      case Prefs::RPC_WHITELIST_ENABLED:
+        if (mySession)
+          tr_sessionSetRPCWhitelistEnabled (mySession, myPrefs.getBool (key));
+        break;
+
+      case Prefs::RPC_WHITELIST:
+        if (mySession)
+          tr_sessionSetRPCWhitelist (mySession, myPrefs.getString (key).toUtf8 ().constData ());
+        break;
+
+      default:
+        std::cerr << "unhandled pref: " << key << std::endl;
     }
-    else
+}
+
+/***
+****
+***/
+
+Session::Session (const QString& configDir, Prefs& prefs):
+  myConfigDir (configDir),
+  myPrefs (prefs),
+  nextUniqueTag (FIRST_UNIQUE_TAG),
+  myBlocklistSize (-1),
+  mySession (0)
+{
+  myStats.ratio = TR_RATIO_NA;
+  myStats.uploadedBytes = 0;
+  myStats.downloadedBytes = 0;
+  myStats.filesAdded = 0;
+  myStats.sessionCount = 0;
+  myStats.secondsActive = 0;
+  myCumulativeStats = myStats;
+
+  connect (&myPrefs, SIGNAL (changed (int)), this, SLOT (updatePref (int)));
+
+  connect (&myRpc, SIGNAL (executed (int64_t, QString, tr_variant *)), this, SLOT (responseReceived (int64_t, QString, tr_variant *)));
+
+  connect (&myRpc, SIGNAL (httpAuthenticationRequired ()), this, SIGNAL (httpAuthenticationRequired ()));
+  connect (&myRpc, SIGNAL (dataReadProgress ()), this, SIGNAL (dataReadProgress ()));
+  connect (&myRpc, SIGNAL (dataSendProgress ()), this, SIGNAL (dataSendProgress ()));
+  connect (&myRpc, SIGNAL (error (QNetworkReply::NetworkError)), this, SIGNAL (error (QNetworkReply::NetworkError)));
+  connect (&myRpc, SIGNAL (errorMessage (QString)), this, SIGNAL (errorMessage (QString)));
+}
+
+Session::~Session ()
+{
+    stop ();
+}
+
+/***
+****
+***/
+
+void
+Session::stop ()
+{
+  myRpc.stop ();
+
+  if (mySession)
     {
-        tr_benc settings;
-        tr_bencInitDict( &settings, 0 );
-        tr_sessionLoadSettings( &settings, myConfigDir.toUtf8().constData(), "qt" );
-        mySession = tr_sessionInit( "qt", myConfigDir.toUtf8().constData(), true, &settings );
-        tr_bencFree( &settings );
+      tr_sessionClose (mySession);
+      mySession = 0;
+    }
+}
 
-        tr_ctor * ctor = tr_ctorNew( mySession );
-        int torrentCount;
-        tr_torrent ** torrents = tr_sessionLoadTorrents( mySession, ctor, &torrentCount );
-        tr_free( torrents );
-        tr_ctorFree( ctor );
+void
+Session::restart ()
+{
+  stop ();
+  start ();
+}
+
+void
+Session::start ()
+{
+  if (myPrefs.get<bool> (Prefs::SESSION_IS_REMOTE))
+    {
+      QUrl url;
+      url.setScheme (QLatin1String ("http"));
+      url.setHost (myPrefs.get<QString> (Prefs::SESSION_REMOTE_HOST));
+      url.setPort (myPrefs.get<int> (Prefs::SESSION_REMOTE_PORT));
+      url.setPath (QLatin1String ("/transmission/rpc"));
+      if (myPrefs.get<bool> (Prefs::SESSION_REMOTE_AUTH))
+        {
+          url.setUserName (myPrefs.get<QString> (Prefs::SESSION_REMOTE_USERNAME));
+          url.setPassword (myPrefs.get<QString> (Prefs::SESSION_REMOTE_PASSWORD));
+        }
+
+      myRpc.start (url);
+    }
+  else
+    {
+      tr_variant settings;
+      tr_variantInitDict (&settings, 0);
+      tr_sessionLoadSettings (&settings, myConfigDir.toUtf8 ().constData (), "qt");
+      mySession = tr_sessionInit (myConfigDir.toUtf8 ().constData (), true, &settings);
+      tr_variantFree (&settings);
+
+      myRpc.start (mySession);
+
+      tr_ctor * ctor = tr_ctorNew (mySession);
+      int torrentCount;
+      tr_torrent ** torrents = tr_sessionLoadTorrents (mySession, ctor, &torrentCount);
+      tr_free (torrents);
+      tr_ctorFree (ctor);
     }
 
-    emit sourceChanged( );
+  emit sourceChanged ();
 }
 
 bool
-Session :: isServer( ) const
+Session::isServer () const
 {
-    return mySession != 0;
+  return mySession != 0;
 }
 
 bool
-Session :: isLocal( ) const
+Session::isLocal () const
 {
-    if( mySession != 0 )
-        return true;
-
-    if( myUrl.host() == "127.0.0.1" )
-        return true;
-
-    if( !myUrl.host().compare( "localhost", Qt::CaseInsensitive ) )
-        return true;
-
-    return false;
+  return myRpc.isLocal ();
 }
 
 /***
@@ -373,251 +384,211 @@ Session :: isLocal( ) const
 
 namespace
 {
-    tr_benc *
-    buildRequest( const char * method, tr_benc& top, int tag=-1 )
+  void
+  addOptionalIds (tr_variant * args, const QSet<int>& ids)
+  {
+    if (!ids.isEmpty ())
+      {
+        tr_variant * idList (tr_variantDictAddList (args, TR_KEY_ids, ids.size ()));
+        for (const int i: ids)
+          tr_variantListAddInt (idList, i);
+      }
+  }
+}
+
+void
+Session::torrentSet (const QSet<int>& ids, const tr_quark key, double value)
+{
+  tr_variant args;
+  tr_variantInitDict (&args, 2);
+  tr_variantDictAddReal (&args, key, value);
+  addOptionalIds (&args, ids);
+
+  exec (TR_KEY_torrent_set, &args);
+}
+
+void
+Session::torrentSet (const QSet<int>& ids, const tr_quark key, int value)
+{
+  tr_variant args;
+  tr_variantInitDict (&args, 2);
+  tr_variantDictAddInt (&args, key, value);
+  addOptionalIds (&args, ids);
+
+  exec (TR_KEY_torrent_set, &args);
+}
+
+void
+Session::torrentSet (const QSet<int>& ids, const tr_quark key, bool value)
+{
+  tr_variant args;
+  tr_variantInitDict (&args, 2);
+  tr_variantDictAddBool (&args, key, value);
+  addOptionalIds (&args, ids);
+
+  exec (TR_KEY_torrent_set, &args);
+}
+
+void
+Session::torrentSet (const QSet<int>& ids, const tr_quark key, const QStringList& value)
+{
+  tr_variant args;
+  tr_variantInitDict (&args, 2);
+  addOptionalIds (&args, ids);
+  tr_variant * list (tr_variantDictAddList (&args, key, value.size ()));
+  for (const QString& str: value)
+    tr_variantListAddStr (list, str.toUtf8 ().constData ());
+
+  exec(TR_KEY_torrent_set, &args);
+}
+
+void
+Session::torrentSet (const QSet<int>& ids, const tr_quark key, const QList<int>& value)
+{
+  tr_variant args;
+  tr_variantInitDict (&args, 2);
+  addOptionalIds (&args, ids);
+  tr_variant * list (tr_variantDictAddList (&args, key, value.size ()));
+  for (const int i: value)
+    tr_variantListAddInt (list, i);
+
+  exec (TR_KEY_torrent_set, &args);
+}
+
+void
+Session::torrentSet (const QSet<int>& ids, const tr_quark key, const QPair<int,QString>& value)
+{
+  tr_variant args;
+  tr_variantInitDict (&args, 2);
+  addOptionalIds (&args, ids);
+  tr_variant * list (tr_variantDictAddList (&args, key, 2));
+  tr_variantListAddInt (list, value.first);
+  tr_variantListAddStr (list, value.second.toUtf8 ().constData ());
+
+  exec (TR_KEY_torrent_set, &args);
+}
+
+void
+Session::torrentSetLocation (const QSet<int>& ids, const QString& location, bool doMove)
+{
+  tr_variant args;
+  tr_variantInitDict (&args, 3);
+  addOptionalIds (&args, ids);
+  tr_variantDictAddStr (&args, TR_KEY_location, location.toUtf8 ().constData ());
+  tr_variantDictAddBool (&args, TR_KEY_move, doMove);
+
+  exec (TR_KEY_torrent_set_location, &args);
+}
+
+void
+Session::torrentRenamePath (const QSet<int>& ids, const QString& oldpath, const QString& newname)
+{
+  tr_variant args;
+  tr_variantInitDict (&args, 2);
+  addOptionalIds (&args, ids);
+  tr_variantDictAddStr (&args, TR_KEY_path, oldpath.toUtf8 ().constData ());
+  tr_variantDictAddStr (&args, TR_KEY_name, newname.toUtf8 ().constData ());
+
+  exec ("torrent-rename-path", &args, TAG_RENAME_PATH);
+}
+
+void
+Session::refreshTorrents (const QSet<int>& ids)
+{
+  if (ids.empty ())
     {
-        tr_bencInitDict( &top, 3 );
-        tr_bencDictAddStr( &top, "method", method );
-        if( tag >= 0 )
-            tr_bencDictAddInt( &top, "tag", tag );
-        return tr_bencDictAddDict( &top, "arguments", 0 );
+      refreshAllTorrents ();
     }
-
-    void
-    addOptionalIds( tr_benc * args, const QSet<int>& ids )
+  else
     {
-        if( !ids.isEmpty( ) )
-        {
-            tr_benc * idList( tr_bencDictAddList( args, "ids", ids.size( ) ) );
-            foreach( int i, ids )
-                tr_bencListAddInt( idList, i );
-        }
-    }
-}
+      tr_variant args;
+      tr_variantInitDict (&args, 2);
+      addList (tr_variantDictAddList (&args, TR_KEY_fields, 0), getStatKeys ());
+      addOptionalIds (&args, ids);
 
-void
-Session :: torrentSet( const QSet<int>& ids, const QString& key, double value )
-{
-    tr_benc top;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "torrent-set" );
-    tr_benc * args = tr_bencDictAddDict( &top, "arguments", 2 );
-    tr_bencDictAddReal( args, key.toUtf8().constData(), value );
-    addOptionalIds( args, ids );
-    exec( &top );
-    tr_bencFree( &top );
-}
-
-void
-Session :: torrentSet( const QSet<int>& ids, const QString& key, int value )
-{
-    tr_benc top;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "torrent-set" );
-    tr_benc * args = tr_bencDictAddDict( &top, "arguments", 2 );
-    tr_bencDictAddInt( args, key.toUtf8().constData(), value );
-    addOptionalIds( args, ids );
-    exec( &top );
-    tr_bencFree( &top );
-}
-
-void
-Session :: torrentSet( const QSet<int>& ids, const QString& key, bool value )
-{
-    tr_benc top;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "torrent-set" );
-    tr_benc * args = tr_bencDictAddDict( &top, "arguments", 2 );
-    tr_bencDictAddBool( args, key.toUtf8().constData(), value );
-    addOptionalIds( args, ids );
-    exec( &top );
-    tr_bencFree( &top );
-}
-
-void
-Session :: torrentSet( const QSet<int>& ids, const QString& key, const QStringList& value )
-{
-    tr_benc top;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "torrent-set" );
-    tr_benc * args = tr_bencDictAddDict( &top, "arguments", 2 );
-    addOptionalIds( args, ids );
-    tr_benc * list( tr_bencDictAddList( args, key.toUtf8().constData(), value.size( ) ) );
-    foreach( const QString str, value )
-        tr_bencListAddStr( list, str.toUtf8().constData() );
-    exec( &top );
-    tr_bencFree( &top );
-}
-
-void
-Session :: torrentSet( const QSet<int>& ids, const QString& key, const QList<int>& value )
-{
-    tr_benc top;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "torrent-set" );
-    tr_benc * args( tr_bencDictAddDict( &top, "arguments", 2 ) );
-    addOptionalIds( args, ids );
-    tr_benc * list( tr_bencDictAddList( args, key.toUtf8().constData(), value.size( ) ) );
-    foreach( int i, value )
-        tr_bencListAddInt( list, i );
-    exec( &top );
-    tr_bencFree( &top );
-}
-
-void
-Session :: torrentSet( const QSet<int>& ids, const QString& key, const QPair<int,QString>& value )
-{
-    tr_benc top;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "torrent-set" );
-    tr_benc * args( tr_bencDictAddDict( &top, "arguments", 2 ) );
-    addOptionalIds( args, ids );
-    tr_benc * list( tr_bencDictAddList( args, key.toUtf8().constData(), 2 ) );
-    tr_bencListAddInt( list, value.first );
-    tr_bencListAddStr( list, value.second.toUtf8().constData() );
-    exec( &top );
-    tr_bencFree( &top );
-}
-
-void
-Session :: torrentSetLocation( const QSet<int>& ids, const QString& location, bool doMove )
-{
-    tr_benc top;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "torrent-set-location" );
-    tr_benc * args( tr_bencDictAddDict( &top, "arguments", 3 ) );
-    addOptionalIds( args, ids );
-    tr_bencDictAddStr( args, "location", location.toUtf8().constData() );
-    tr_bencDictAddBool( args, "move", doMove );
-    exec( &top );
-    tr_bencFree( &top );
-}
-
-void
-Session :: refreshTorrents( const QSet<int>& ids )
-{
-    if( ids.empty( ) )
-    {
-        refreshAllTorrents( );
-    }
-    else
-    {
-        tr_benc top;
-        tr_bencInitDict( &top, 3 );
-        tr_bencDictAddStr( &top, "method", "torrent-get" );
-        tr_bencDictAddInt( &top, "tag", TAG_SOME_TORRENTS );
-        tr_benc * args( tr_bencDictAddDict( &top, "arguments", 2 ) );
-        addList( tr_bencDictAddList( args, "fields", 0 ), getStatKeys( ) );
-        addOptionalIds( args, ids );
-        exec( &top );
-        tr_bencFree( &top );
+      exec (TR_KEY_torrent_get, &args, TAG_SOME_TORRENTS);
     }
 }
 
 void
-Session :: refreshExtraStats( const QSet<int>& ids )
+Session::refreshExtraStats (const QSet<int>& ids)
 {
-    tr_benc top;
-    tr_bencInitDict( &top, 3 );
-    tr_bencDictAddStr( &top, "method", "torrent-get" );
-    tr_bencDictAddInt( &top, "tag", TAG_SOME_TORRENTS );
-    tr_benc * args( tr_bencDictAddDict( &top, "arguments", 2 ) );
-    addOptionalIds( args, ids );
-    addList( tr_bencDictAddList( args, "fields", 0 ), getStatKeys( ) + getExtraStatKeys( ));
-    exec( &top );
-    tr_bencFree( &top );
+  tr_variant args;
+  tr_variantInitDict (&args, 3);
+  addOptionalIds (&args, ids);
+  addList (tr_variantDictAddList (&args, TR_KEY_fields, 0), getStatKeys () + getExtraStatKeys ());
+
+  exec (TR_KEY_torrent_get, &args, TAG_SOME_TORRENTS);
 }
 
 void
-Session :: sendTorrentRequest( const char * request, const QSet<int>& ids )
+Session::sendTorrentRequest (const char * request, const QSet<int>& ids)
 {
-    tr_benc top;
-    tr_benc * args( buildRequest( request, top ) );
-    addOptionalIds( args, ids );
-    exec( &top );
-    tr_bencFree( &top );
+  tr_variant args;
+  tr_variantInitDict (&args, 1);
+  addOptionalIds (&args, ids);
 
-    refreshTorrents( ids );
+  exec (request, &args);
+
+  refreshTorrents (ids);
 }
 
-void Session :: pauseTorrents    ( const QSet<int>& ids ) { sendTorrentRequest( "torrent-stop", ids ); }
-void Session :: startTorrents    ( const QSet<int>& ids ) { sendTorrentRequest( "torrent-start", ids ); } 
-void Session :: startTorrentsNow ( const QSet<int>& ids ) { sendTorrentRequest( "torrent-start-now", ids ); }
-void Session :: queueMoveTop     ( const QSet<int>& ids ) { sendTorrentRequest( "queue-move-top", ids ); } 
-void Session :: queueMoveUp      ( const QSet<int>& ids ) { sendTorrentRequest( "queue-move-up", ids ); } 
-void Session :: queueMoveDown    ( const QSet<int>& ids ) { sendTorrentRequest( "queue-move-down", ids ); } 
-void Session :: queueMoveBottom  ( const QSet<int>& ids ) { sendTorrentRequest( "queue-move-bottom", ids ); } 
+void Session::pauseTorrents    (const QSet<int>& ids) { sendTorrentRequest ("torrent-stop",      ids); }
+void Session::startTorrents    (const QSet<int>& ids) { sendTorrentRequest ("torrent-start",     ids); }
+void Session::startTorrentsNow (const QSet<int>& ids) { sendTorrentRequest ("torrent-start-now", ids); }
+void Session::queueMoveTop     (const QSet<int>& ids) { sendTorrentRequest ("queue-move-top",    ids); }
+void Session::queueMoveUp      (const QSet<int>& ids) { sendTorrentRequest ("queue-move-up",     ids); }
+void Session::queueMoveDown    (const QSet<int>& ids) { sendTorrentRequest ("queue-move-down",   ids); }
+void Session::queueMoveBottom  (const QSet<int>& ids) { sendTorrentRequest ("queue-move-bottom", ids); }
 
 void
-Session :: refreshActiveTorrents( )
+Session::refreshActiveTorrents ()
 {
-    tr_benc top;
-    tr_bencInitDict( &top, 3 );
-    tr_bencDictAddStr( &top, "method", "torrent-get" );
-    tr_bencDictAddInt( &top, "tag", TAG_SOME_TORRENTS );
-    tr_benc * args( tr_bencDictAddDict( &top, "arguments", 2 ) );
-    tr_bencDictAddStr( args, "ids", "recently-active" );
-    addList( tr_bencDictAddList( args, "fields", 0 ), getStatKeys( ) );
-    exec( &top );
-    tr_bencFree( &top );
+  tr_variant args;
+  tr_variantInitDict (&args, 2);
+  tr_variantDictAddStr (&args, TR_KEY_ids, "recently-active");
+  addList (tr_variantDictAddList (&args, TR_KEY_fields, 0), getStatKeys ());
+
+  exec (TR_KEY_torrent_get, &args, TAG_SOME_TORRENTS);
 }
 
 void
-Session :: refreshAllTorrents( )
+Session::refreshAllTorrents ()
 {
-    tr_benc top;
-    tr_bencInitDict( &top, 3 );
-    tr_bencDictAddStr( &top, "method", "torrent-get" );
-    tr_bencDictAddInt( &top, "tag", TAG_ALL_TORRENTS );
-    tr_benc * args( tr_bencDictAddDict( &top, "arguments", 1 ) );
-    addList( tr_bencDictAddList( args, "fields", 0 ), getStatKeys( ) );
-    exec( &top );
-    tr_bencFree( &top );
+  tr_variant args;
+  tr_variantInitDict (&args, 1);
+  addList (tr_variantDictAddList (&args, TR_KEY_fields, 0), getStatKeys ());
+
+  exec (TR_KEY_torrent_get, &args, TAG_ALL_TORRENTS);
 }
 
 void
-Session :: initTorrents( const QSet<int>& ids )
+Session::initTorrents (const QSet<int>& ids)
 {
-    tr_benc top;
-    const int tag( ids.isEmpty() ? TAG_ALL_TORRENTS : TAG_SOME_TORRENTS );
-    tr_benc * args( buildRequest( "torrent-get", top, tag ) );
-    addOptionalIds( args, ids );
-    addList( tr_bencDictAddList( args, "fields", 0 ), getStatKeys()+getInfoKeys() );
-    exec( &top );
-    tr_bencFree( &top );
+  tr_variant args;
+  tr_variantInitDict (&args, 2);
+  addOptionalIds (&args, ids);
+  addList (tr_variantDictAddList (&args, TR_KEY_fields, 0), getStatKeys ()+getInfoKeys ());
+
+  exec ("torrent-get", &args, ids.isEmpty () ? TAG_ALL_TORRENTS : TAG_SOME_TORRENTS);
 }
 
 void
-Session :: refreshSessionStats( )
+Session::refreshSessionStats ()
 {
-    tr_benc top;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "session-stats" );
-    tr_bencDictAddInt( &top, "tag", TAG_SESSION_STATS );
-    exec( &top );
-    tr_bencFree( &top );
+  exec ("session-stats", nullptr, TAG_SESSION_STATS);
 }
 
 void
-Session :: refreshSessionInfo( )
+Session::refreshSessionInfo ()
 {
-    tr_benc top;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "session-get" );
-    tr_bencDictAddInt( &top, "tag", TAG_SESSION_INFO );
-    exec( &top );
-    tr_bencFree( &top );
+  exec ("session-get", nullptr, TAG_SESSION_INFO);
 }
 
 void
-Session :: updateBlocklist( )
+Session::updateBlocklist ()
 {
-    tr_benc top;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "blocklist-update" );
-    tr_bencDictAddInt( &top, "tag", TAG_BLOCKLIST_UPDATE );
-    exec( &top );
-    tr_bencFree( &top );
+  exec ("blocklist-update", nullptr, TAG_BLOCKLIST_UPDATE);
 }
 
 /***
@@ -625,403 +596,374 @@ Session :: updateBlocklist( )
 ***/
 
 void
-Session :: exec( const tr_benc * request )
+Session::exec (tr_quark method, tr_variant * args, int64_t tag)
 {
-    char * str = tr_bencToStr( request, TR_FMT_JSON_LEAN, NULL );
-    exec( str );
-    tr_free( str );
+  myRpc.exec (method, args, tag);
 }
 
 void
-Session :: localSessionCallback( tr_session * session, struct evbuffer * json, void * self )
+Session::exec (const char* method, tr_variant * args, int64_t tag)
 {
-    Q_UNUSED( session );
-
-    ((Session*)self)->parseResponse( (const char*) evbuffer_pullup( json, -1 ), evbuffer_get_length( json ) );
-}
-
-#define REQUEST_DATA_PROPERTY_KEY "requestData"
-
-void
-Session :: exec( const char * json )
-{
-    if( mySession  )
-    {
-        tr_rpc_request_exec_json( mySession, json, strlen( json ), localSessionCallback, this );
-    }
-    else if( !myUrl.isEmpty( ) )
-    {
-        QNetworkRequest request;
-        request.setUrl( myUrl );
-        request.setRawHeader( "User-Agent", QString( QCoreApplication::instance()->applicationName() + "/" + LONG_VERSION_STRING ).toAscii() );
-        request.setRawHeader( "Content-Type", "application/json; charset=UTF-8" );
-        if( !mySessionId.isEmpty( ) )
-            request.setRawHeader( TR_RPC_SESSION_ID_HEADER, mySessionId.toAscii() );
-
-        const QByteArray requestData( json );
-        QNetworkReply * reply = networkAccessManager()->post( request, requestData );
-        reply->setProperty( REQUEST_DATA_PROPERTY_KEY, requestData );
-        connect( reply, SIGNAL(downloadProgress(qint64,qint64)), this, SIGNAL(dataReadProgress()));
-        connect( reply, SIGNAL(uploadProgress(qint64,qint64)), this, SIGNAL(dataSendProgress()));
-
-#ifdef DEBUG_HTTP
-        std::cerr << "sending " << "POST " << qPrintable( myUrl.path() ) << std::endl;
-        foreach( QByteArray b, request.rawHeaderList() )
-            std::cerr << b.constData()
-                      << ": "
-                      << request.rawHeader( b ).constData()
-                      << std::endl;
-        std::cerr << "Body:\n" << json << std::endl;
-#endif
-    }
+  myRpc.exec (method, args, tag);
 }
 
 void
-Session :: onFinished( QNetworkReply * reply )
+Session::responseReceived (int64_t tag, const QString& result, tr_variant * args)
 {
-#ifdef DEBUG_HTTP
-    std::cerr << "http response header: " << std::endl;
-    foreach( QByteArray b, reply->rawHeaderList() )
-        std::cerr << b.constData()
-                  << ": "
-                  << reply->rawHeader( b ).constData()
-                  << std::endl;
-    std::cerr << "json:\n" << reply->peek( reply->bytesAvailable() ).constData() << std::endl;
-#endif
+  emit executed (tag, result, args);
 
-    if( ( reply->attribute( QNetworkRequest::HttpStatusCodeAttribute ).toInt() == 409 )
-        && ( reply->hasRawHeader( TR_RPC_SESSION_ID_HEADER ) ) )
+  if (tag < 0)
+    return;
+
+  switch (tag)
     {
-        // we got a 409 telling us our session id has expired.
-        // update it and resubmit the request.
-        mySessionId = QString( reply->rawHeader( TR_RPC_SESSION_ID_HEADER ) );
-        exec( reply->property( REQUEST_DATA_PROPERTY_KEY ).toByteArray( ).constData( ) );
-    }
-    else if( reply->error() != QNetworkReply::NoError )
-    {
-        std::cerr << "http error: " << qPrintable( reply->errorString() ) << std::endl;
-    }
-    else
-    {
-        const QByteArray response( reply->readAll() );
-        const char * json( response.constData( ) );
-        int jsonLength( response.size( ) );
-        if( jsonLength>0 && json[jsonLength-1] == '\n' ) --jsonLength;
-        parseResponse( json, jsonLength );
-    }
+      case TAG_SOME_TORRENTS:
+      case TAG_ALL_TORRENTS:
+        if (args != nullptr)
+          {
+            tr_variant * torrents;
+            if (tr_variantDictFindList (args, TR_KEY_torrents, &torrents))
+                emit torrentsUpdated (torrents, tag==TAG_ALL_TORRENTS);
+            if (tr_variantDictFindList (args, TR_KEY_removed, &torrents))
+                emit torrentsRemoved (torrents);
+          }
+        break;
 
-    reply->deleteLater();
-}
+      case TAG_SESSION_STATS:
+        if (args != nullptr)
+          updateStats (args);
+        break;
 
-void
-Session :: parseResponse( const char * json, size_t jsonLength )
-{
-    tr_benc top;
-    const uint8_t * end( 0 );
-    const int err( tr_jsonParse( "rpc", json, jsonLength, &top, &end ) );
-    if( !err )
-    {
-        int64_t tag = -1;
-        const char * result = NULL;
-        tr_benc * args = NULL;
+      case TAG_SESSION_INFO:
+        if (args != nullptr)
+          updateInfo (args);
+        break;
 
-        tr_bencDictFindInt ( &top, "tag", &tag );
-        tr_bencDictFindStr ( &top, "result", &result );
-        tr_bencDictFindDict( &top, "arguments", &args );
-
-        emit executed( tag, result, args );
-
-        tr_benc * torrents;
-        const char * str;
-
-        if( tr_bencDictFindInt( &top, "tag", &tag ) )
+      case TAG_BLOCKLIST_UPDATE:
         {
-            switch( tag )
+          int64_t intVal = 0;
+          if (args != nullptr)
             {
-                case TAG_SOME_TORRENTS:
-                case TAG_ALL_TORRENTS:
-                    if( tr_bencDictFindDict( &top, "arguments", &args ) ) {
-                        if( tr_bencDictFindList( args, "torrents", &torrents ) )
-                            emit torrentsUpdated( torrents, tag==TAG_ALL_TORRENTS );
-                        if( tr_bencDictFindList( args, "removed", &torrents ) )
-                            emit torrentsRemoved( torrents );
-                    }
-                    break;
-
-                case TAG_SESSION_STATS:
-                    if( tr_bencDictFindDict( &top, "arguments", &args ) )
-                        updateStats( args );
-                    break;
-
-                case TAG_SESSION_INFO:
-                    if( tr_bencDictFindDict( &top, "arguments", &args ) )
-                        updateInfo( args );
-                    break;
-
-                case TAG_BLOCKLIST_UPDATE: {
-                    int64_t intVal = 0;
-                    if( tr_bencDictFindDict( &top, "arguments", &args ) )
-                        if( tr_bencDictFindInt( args, "blocklist-size", &intVal ) )
-                            setBlocklistSize( intVal );
-                    break;
-                }
-
-                case TAG_PORT_TEST: {
-                    bool isOpen = 0;
-                    if( tr_bencDictFindDict( &top, "arguments", &args ) )
-                        tr_bencDictFindBool( args, "port-is-open", &isOpen );
-                    emit portTested( (bool)isOpen );
-                }
-
-                case TAG_MAGNET_LINK: {
-                    tr_benc * args;
-                    tr_benc * torrents;
-                    tr_benc * child;
-                    const char * str;
-                    if( tr_bencDictFindDict( &top, "arguments", &args )
-                        && tr_bencDictFindList( args, "torrents", &torrents )
-                        && (( child = tr_bencListChild( torrents, 0 )))
-                        && tr_bencDictFindStr( child, "magnetLink", &str ) )
-                            QApplication::clipboard()->setText( str );
-                    break;
-                }
-
-                case TAG_ADD_TORRENT:
-                    str = "";
-                    if( tr_bencDictFindStr( &top, "result", &str ) && strcmp( str, "success" ) ) {
-                        QMessageBox * d = new QMessageBox( QMessageBox::Information,
-                                                           tr( "Add Torrent" ),
-                                                           QString::fromUtf8(str),
-                                                           QMessageBox::Close,
-                                                           QApplication::activeWindow());
-                        connect( d, SIGNAL(rejected()), d, SLOT(deleteLater()) );
-                        d->show( );
-                    }
-                    break;
-
-                default:
-                    break;
+              if (tr_variantDictFindInt (args, TR_KEY_blocklist_size, &intVal))
+                setBlocklistSize (intVal);
             }
+          break;
         }
-        tr_bencFree( &top );
-    }
-}
 
-void
-Session :: updateStats( tr_benc * d, struct tr_session_stats * stats )
-{
-    int64_t i;
-
-    if( tr_bencDictFindInt( d, "uploadedBytes", &i ) )
-        stats->uploadedBytes = i;
-    if( tr_bencDictFindInt( d, "downloadedBytes", &i ) )
-        stats->downloadedBytes = i;
-    if( tr_bencDictFindInt( d, "filesAdded", &i ) )
-        stats->filesAdded = i;
-    if( tr_bencDictFindInt( d, "sessionCount", &i ) )
-        stats->sessionCount = i;
-    if( tr_bencDictFindInt( d, "secondsActive", &i ) )
-        stats->secondsActive = i;
-
-    stats->ratio = tr_getRatio( stats->uploadedBytes, stats->downloadedBytes );
-
-}
-
-void
-Session :: updateStats( tr_benc * d )
-{
-    tr_benc * c;
-
-    if( tr_bencDictFindDict( d, "current-stats", &c ) )
-        updateStats( c, &myStats );
-
-    if( tr_bencDictFindDict( d, "cumulative-stats", &c ) )
-        updateStats( c, &myCumulativeStats );
-
-    emit statsUpdated( );
-}
-
-void
-Session :: updateInfo( tr_benc * d )
-{
-    int64_t i;
-    const char * str;
-    disconnect( &myPrefs, SIGNAL(changed(int)), this, SLOT(updatePref(int)) );
-
-    for( int i=Prefs::FIRST_CORE_PREF; i<=Prefs::LAST_CORE_PREF; ++i )
-    {
-        const tr_benc * b( tr_bencDictFind( d, myPrefs.keyStr( i ) ) );
-
-        if( !b )
-            continue;
-
-        if( i == Prefs :: ENCRYPTION )
+      case TAG_RENAME_PATH:
         {
-            const char * val;
-            if( tr_bencGetStr( b, &val ) )
+          int64_t id = 0;
+          if (result != QLatin1String ("success"))
             {
-                if( !qstrcmp( val , "required" ) )
-                    myPrefs.set( i, 2 );
-                else if( !qstrcmp( val , "preferred" ) )
-                    myPrefs.set( i, 1 );
-                else if( !qstrcmp( val , "tolerated" ) )
-                    myPrefs.set( i, 0 );
+              const char * path = "";
+              const char * name = "";
+              tr_variantDictFindStr (args, TR_KEY_path, &path, 0);
+              tr_variantDictFindStr (args, TR_KEY_name, &name, 0);
+              const QString title = tr ("Error Renaming Path");
+              const QString text = tr ("<p><b>Unable to rename \"%1\" as \"%2\": %3.</b></p> <p>Please correct the errors and try again.</p>").arg (QString::fromUtf8 (path)).arg (QString::fromUtf8 (name)).arg (result);
+              QMessageBox * d = new QMessageBox (QMessageBox::Information, title, text,
+                                                 QMessageBox::Close,
+                                                 qApp->activeWindow ());
+              connect (d, SIGNAL (rejected ()), d, SLOT (deleteLater ()));
+              d->show ();
             }
-            continue;
-        }
+          else if (tr_variantDictFindInt (args, TR_KEY_id, &id) && id)
+            {
+              tr_variant args;
+              tr_variantInitDict (&args, 2);
+              tr_variantDictAddInt (&args, TR_KEY_ids, id);
+              addList (tr_variantDictAddList (&args, TR_KEY_fields, 0),
+                       KeyList () << TR_KEY_fileStats << TR_KEY_files << TR_KEY_id << TR_KEY_name);
+              exec ("torrent-get", &args, TAG_SOME_TORRENTS);
+            }
 
-        switch( myPrefs.type( i ) )
+          break;
+      }
+
+      case TAG_PORT_TEST:
         {
-            case QVariant :: Int: {
-                int64_t val;
-                if( tr_bencGetInt( b, &val ) )
-                    myPrefs.set( i, (int)val );
-                break;
+          bool isOpen;
+          if (args == nullptr ||
+              !tr_variantDictFindBool (args, TR_KEY_port_is_open, &isOpen))
+            isOpen = false;
+          emit portTested (isOpen);
+          break;
+        }
+
+      case TAG_MAGNET_LINK:
+        {
+          tr_variant * torrents;
+          tr_variant * child;
+          const char * str;
+          if (args != nullptr
+              && tr_variantDictFindList (args, TR_KEY_torrents, &torrents)
+              && ( (child = tr_variantListChild (torrents, 0)))
+              && tr_variantDictFindStr (child, TR_KEY_magnetLink, &str, NULL))
+            qApp->clipboard ()->setText (QString::fromUtf8 (str));
+          break;
+        }
+
+      case TAG_ADD_TORRENT:
+        {
+          const char * str = "";
+          if (result != QLatin1String ("success"))
+            {
+              QMessageBox * d = new QMessageBox (QMessageBox::Information,
+                                                 tr ("Add Torrent"),
+                                                 QString::fromUtf8 (str),
+                                                 QMessageBox::Close,
+                                                 qApp->activeWindow ());
+              connect (d, SIGNAL (rejected ()), d, SLOT (deleteLater ()));
+              d->show ();
             }
-            case QVariant :: Double: {
-                double val;
-                if( tr_bencGetReal( b, &val ) )
-                    myPrefs.set( i, val );
-                break;
+          break;
+        }
+    }
+}
+
+void
+Session::updateStats (tr_variant * d, tr_session_stats * stats)
+{
+  int64_t i;
+
+  if (tr_variantDictFindInt (d, TR_KEY_uploadedBytes, &i))
+    stats->uploadedBytes = i;
+  if (tr_variantDictFindInt (d, TR_KEY_downloadedBytes, &i))
+    stats->downloadedBytes = i;
+  if (tr_variantDictFindInt (d, TR_KEY_filesAdded, &i))
+    stats->filesAdded = i;
+  if (tr_variantDictFindInt (d, TR_KEY_sessionCount, &i))
+    stats->sessionCount = i;
+  if (tr_variantDictFindInt (d, TR_KEY_secondsActive, &i))
+    stats->secondsActive = i;
+
+  stats->ratio = tr_getRatio (stats->uploadedBytes, stats->downloadedBytes);
+}
+
+void
+Session::updateStats (tr_variant * d)
+{
+  tr_variant * c;
+
+  if (tr_variantDictFindDict (d, TR_KEY_current_stats, &c))
+    updateStats (c, &myStats);
+
+  if (tr_variantDictFindDict (d, TR_KEY_cumulative_stats, &c))
+    updateStats (c, &myCumulativeStats);
+
+  emit statsUpdated ();
+}
+
+void
+Session::updateInfo (tr_variant * d)
+{
+  int64_t i;
+  const char * str;
+
+  disconnect (&myPrefs, SIGNAL (changed (int)), this, SLOT (updatePref (int)));
+
+  for (int i=Prefs::FIRST_CORE_PREF; i<=Prefs::LAST_CORE_PREF; ++i)
+    {
+      const tr_variant * b (tr_variantDictFind (d, myPrefs.getKey (i)));
+
+      if (!b)
+        continue;
+
+      if (i == Prefs::ENCRYPTION)
+        {
+          const char * val;
+          if (tr_variantGetStr (b, &val, NULL))
+            {
+              if (!qstrcmp (val , "required"))
+                myPrefs.set (i, 2);
+              else if (!qstrcmp (val , "preferred"))
+                myPrefs.set (i, 1);
+              else if (!qstrcmp (val , "tolerated"))
+                myPrefs.set (i, 0);
             }
-            case QVariant :: Bool: {
-                bool val;
-                if( tr_bencGetBool( b, &val ) )
-                    myPrefs.set( i, (bool)val );
-                break;
+          continue;
+        }
+
+      switch (myPrefs.type (i))
+        {
+          case QVariant::Int:
+            {
+              int64_t val;
+              if (tr_variantGetInt (b, &val))
+                myPrefs.set (i, static_cast<int>(val));
+              break;
             }
-            case TrTypes :: FilterModeType:
-            case TrTypes :: SortModeType:
-            case QVariant :: String: {
-                const char * val;
-                if( tr_bencGetStr( b, &val ) )
-                    myPrefs.set( i, QString(val) );
-                break;
+          case QVariant::Double:
+            {
+              double val;
+              if (tr_variantGetReal (b, &val))
+                myPrefs.set (i, val);
+              break;
             }
-            default:
-                break;
+          case QVariant::Bool:
+            {
+              bool val;
+              if (tr_variantGetBool (b, &val))
+                myPrefs.set (i, val);
+              break;
+            }
+          case CustomVariantType::FilterModeType:
+          case CustomVariantType::SortModeType:
+          case QVariant::String:
+            {
+              const char * val;
+              if (tr_variantGetStr (b, &val, NULL))
+                myPrefs.set (i, QString::fromUtf8 (val));
+              break;
+            }
+          default:
+            break;
         }
     }
 
-    bool b;
-    double x;
-    if( tr_bencDictFindBool( d, "seedRatioLimited", &b ) )
-        myPrefs.set( Prefs::RATIO_ENABLED, b ? true : false );
-    if( tr_bencDictFindReal( d, "seedRatioLimit", &x ) )
-        myPrefs.set( Prefs::RATIO, x );
+  bool b;
+  double x;
+  if (tr_variantDictFindBool (d, TR_KEY_seedRatioLimited, &b))
+    myPrefs.set (Prefs::RATIO_ENABLED, b);
+  if (tr_variantDictFindReal (d, TR_KEY_seedRatioLimit, &x))
+    myPrefs.set (Prefs::RATIO, x);
 
-    /* Use the C API to get settings that, for security reasons, aren't supported by RPC */
-    if( mySession != 0 )
+  /* Use the C API to get settings that, for security reasons, aren't supported by RPC */
+  if (mySession != 0)
     {
-        myPrefs.set( Prefs::RPC_ENABLED,           tr_sessionIsRPCEnabled           ( mySession ) );
-        myPrefs.set( Prefs::RPC_AUTH_REQUIRED,     tr_sessionIsRPCPasswordEnabled   ( mySession ) );
-        myPrefs.set( Prefs::RPC_PASSWORD,          tr_sessionGetRPCPassword         ( mySession ) );
-        myPrefs.set( Prefs::RPC_PORT,              tr_sessionGetRPCPort             ( mySession ) );
-        myPrefs.set( Prefs::RPC_USERNAME,          tr_sessionGetRPCUsername         ( mySession ) );
-        myPrefs.set( Prefs::RPC_WHITELIST_ENABLED, tr_sessionGetRPCWhitelistEnabled ( mySession ) );
-        myPrefs.set( Prefs::RPC_WHITELIST,         tr_sessionGetRPCWhitelist        ( mySession ) );
+      myPrefs.set (Prefs::RPC_ENABLED,           tr_sessionIsRPCEnabled (mySession));
+      myPrefs.set (Prefs::RPC_AUTH_REQUIRED,     tr_sessionIsRPCPasswordEnabled (mySession));
+      myPrefs.set (Prefs::RPC_PASSWORD,          QString::fromUtf8 (tr_sessionGetRPCPassword (mySession)));
+      myPrefs.set (Prefs::RPC_PORT,              tr_sessionGetRPCPort (mySession));
+      myPrefs.set (Prefs::RPC_USERNAME,          QString::fromUtf8 (tr_sessionGetRPCUsername (mySession)));
+      myPrefs.set (Prefs::RPC_WHITELIST_ENABLED, tr_sessionGetRPCWhitelistEnabled (mySession));
+      myPrefs.set (Prefs::RPC_WHITELIST,         QString::fromUtf8 (tr_sessionGetRPCWhitelist (mySession)));
     }
 
-    if( tr_bencDictFindInt( d, "blocklist-size", &i ) && i!=blocklistSize( ) )
-        setBlocklistSize( i );
+  if (tr_variantDictFindInt (d, TR_KEY_blocklist_size, &i) && i!=blocklistSize ())
+    setBlocklistSize (i);
 
-    if( tr_bencDictFindStr( d, "version", &str ) && ( mySessionVersion != str ) )
-        mySessionVersion = str;
+  if (tr_variantDictFindStr (d, TR_KEY_version, &str, NULL) && (mySessionVersion != QString::fromUtf8 (str)))
+    mySessionVersion = QString::fromUtf8 (str);
 
-    //std::cerr << "Session :: updateInfo end" << std::endl;
-    connect( &myPrefs, SIGNAL(changed(int)), this, SLOT(updatePref(int)) );
+  //std::cerr << "Session::updateInfo end" << std::endl;
+  connect (&myPrefs, SIGNAL (changed (int)), this, SLOT (updatePref (int)));
 
-    emit sessionUpdated( );
+  emit sessionUpdated ();
 }
 
 void
-Session :: setBlocklistSize( int64_t i )
+Session::setBlocklistSize (int64_t i)
 {
-    myBlocklistSize = i;
+  myBlocklistSize = i;
 
-    emit blocklistUpdated( i );
+  emit blocklistUpdated (i);
 }
 
 void
-Session :: addTorrent( const AddData& addMe )
+Session::addTorrent (const AddData& addMe, tr_variant * args, bool trashOriginal)
 {
-    const QByteArray b64 = addMe.toBase64();
+  assert (tr_variantDictFind (args, TR_KEY_filename) == nullptr);
+  assert (tr_variantDictFind (args, TR_KEY_metainfo) == nullptr);
 
-    tr_benc top, *args;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "torrent-add" );
-    args = tr_bencDictAddDict( &top, "arguments", 2 );
-    tr_bencDictAddBool( args, "paused", !myPrefs.getBool( Prefs::START ) );
-    switch( addMe.type ) {
-        case AddData::MAGNET:   tr_bencDictAddStr( args, "filename", addMe.magnet.toUtf8().constData() ); break;
-        case AddData::URL:      tr_bencDictAddStr( args, "filename", addMe.url.toString().toUtf8().constData() ); break;
-        case AddData::FILENAME: /* fall-through */
-        case AddData::METAINFO: tr_bencDictAddRaw( args, "metainfo", b64.constData(), b64.size() ); break;
-        default: std::cerr << "Unhandled AddData type: " << addMe.type << std::endl;
-    }
-    exec( &top );
-    tr_bencFree( &top );
-}
+  if (tr_variantDictFind (args, TR_KEY_paused) == nullptr)
+    tr_variantDictAddBool (args, TR_KEY_paused, !myPrefs.getBool (Prefs::START));
 
-void
-Session :: addNewlyCreatedTorrent( const QString& filename, const QString& localPath )
-{
-    const QByteArray b64 = AddData(filename).toBase64();
-
-    tr_benc top, *args;
-    tr_bencInitDict( &top, 2 );
-    tr_bencDictAddStr( &top, "method", "torrent-add" );
-    args = tr_bencDictAddDict( &top, "arguments", 3 );
-    tr_bencDictAddStr( args, "download-dir", qPrintable(localPath) );
-    tr_bencDictAddBool( args, "paused", !myPrefs.getBool( Prefs::START ) );
-    tr_bencDictAddRaw( args, "metainfo", b64.constData(), b64.size() );
-    exec( &top );
-    tr_bencFree( &top );
-}
-
-void
-Session :: removeTorrents( const QSet<int>& ids, bool deleteFiles )
-{
-    if( !ids.isEmpty( ) )
+  switch (addMe.type)
     {
-        tr_benc top, *args;
-        tr_bencInitDict( &top, 2 );
-        tr_bencDictAddStr( &top, "method", "torrent-remove" );
-        args = tr_bencDictAddDict( &top, "arguments", 2 );
-        addOptionalIds( args, ids );
-        tr_bencDictAddInt( args, "delete-local-data", deleteFiles );
-        exec( &top );
-        tr_bencFree( &top );
+      case AddData::MAGNET:
+        tr_variantDictAddStr (args, TR_KEY_filename, addMe.magnet.toUtf8 ().constData ());
+        break;
+
+      case AddData::URL:
+        tr_variantDictAddStr (args, TR_KEY_filename, addMe.url.toString ().toUtf8 ().constData ());
+        break;
+
+      case AddData::FILENAME: /* fall-through */
+      case AddData::METAINFO:
+        {
+          const QByteArray b64 = addMe.toBase64 ();
+          tr_variantDictAddRaw (args, TR_KEY_metainfo, b64.constData (), b64.size ());
+          break;
+        }
+
+      default:
+        qWarning() << "Unhandled AddData type: " << addMe.type;
+        break;
+    }
+
+  const int64_t tag = getUniqueTag ();
+
+  // maybe delete the source .torrent
+  FileAdded * fileAdded = new FileAdded (tag, addMe.readableName ());
+  if (trashOriginal && addMe.type == AddData::FILENAME)
+    fileAdded->setFileToDelete (addMe.filename);
+  connect (this, SIGNAL (executed (int64_t, QString, tr_variant *)),
+           fileAdded, SLOT (executed (int64_t, QString, tr_variant *)));
+
+  exec ("torrent-add", args, tag);
+}
+
+void
+Session::addTorrent (const AddData& addMe)
+{
+  tr_variant args;
+  tr_variantInitDict (&args, 3);
+
+  addTorrent (addMe, &args, myPrefs.getBool (Prefs::TRASH_ORIGINAL));
+}
+
+void
+Session::addNewlyCreatedTorrent (const QString& filename, const QString& localPath)
+{
+  const QByteArray b64 = AddData (filename).toBase64 ();
+
+  tr_variant args;
+  tr_variantInitDict (&args, 3);
+  tr_variantDictAddStr (&args, TR_KEY_download_dir, localPath.toUtf8 ().constData ());
+  tr_variantDictAddBool (&args, TR_KEY_paused, !myPrefs.getBool (Prefs::START));
+  tr_variantDictAddRaw (&args, TR_KEY_metainfo, b64.constData (), b64.size ());
+
+  exec ("torrent-add", &args);
+}
+
+void
+Session::removeTorrents (const QSet<int>& ids, bool deleteFiles)
+{
+  if (!ids.isEmpty ())
+    {
+      tr_variant args;
+      tr_variantInitDict (&args, 2);
+      addOptionalIds (&args, ids);
+      tr_variantDictAddInt (&args, TR_KEY_delete_local_data, deleteFiles);
+
+      exec ("torrent-remove", &args);
     }
 }
 
 void
-Session :: verifyTorrents( const QSet<int>& ids )
+Session::verifyTorrents (const QSet<int>& ids)
 {
-    if( !ids.isEmpty( ) )
+  if (!ids.isEmpty ())
     {
-        tr_benc top, *args;
-        tr_bencInitDict( &top, 2 );
-        tr_bencDictAddStr( &top, "method", "torrent-verify" );
-        args = tr_bencDictAddDict( &top, "arguments", 1 );
-        addOptionalIds( args, ids );
-        exec( &top );
-        tr_bencFree( &top );
+      tr_variant args;
+      tr_variantInitDict (&args, 1);
+      addOptionalIds (&args, ids);
+
+      exec ("torrent-verify", &args);
     }
 }
 
 void
-Session :: reannounceTorrents( const QSet<int>& ids )
+Session::reannounceTorrents (const QSet<int>& ids)
 {
-    if( !ids.isEmpty( ) )
+  if (!ids.isEmpty ())
     {
-        tr_benc top, *args;
-        tr_bencInitDict( &top, 2 );
-        tr_bencDictAddStr( &top, "method", "torrent-reannounce" );
-        args = tr_bencDictAddDict( &top, "arguments", 1 );
-        addOptionalIds( args, ids );
-        exec( &top );
-        tr_bencFree( &top );
+      tr_variant args;
+      tr_variantInitDict (&args, 1);
+      addOptionalIds (&args, ids);
+
+      exec ("torrent-reannounce", &args);
     }
 }
 
@@ -1030,19 +972,21 @@ Session :: reannounceTorrents( const QSet<int>& ids )
 ***/
 
 void
-Session :: launchWebInterface( )
+Session::launchWebInterface ()
 {
-    QUrl url;
-    if( !mySession ) // remote session
+  QUrl url;
+
+  if (!mySession) // remote session
     {
-        url = myUrl;
-        url.setPath( "/transmission/web/" );
+      url = myRpc.url ();
+      url.setPath (QLatin1String ("/transmission/web/"));
     }
-    else // local session
+  else // local session
     {
-        url.setScheme( "http" );
-        url.setHost( "localhost" );
-        url.setPort( myPrefs.getInt( Prefs::RPC_PORT ) );
+      url.setScheme (QLatin1String ("http"));
+      url.setHost (QLatin1String ("localhost"));
+      url.setPort (myPrefs.getInt (Prefs::RPC_PORT));
     }
-    QDesktopServices :: openUrl( url );
+
+  QDesktopServices::openUrl (url);
 }

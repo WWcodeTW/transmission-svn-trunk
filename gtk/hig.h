@@ -1,13 +1,10 @@
 /*
- * This file Copyright (C) Mnemosyne LLC
+ * This file Copyright (C) 2007-2014 Mnemosyne LLC
  *
- * This file is licensed by the GPL version 2. Works owned by the
- * Transmission project are granted a special exemption to clause 2(b)
- * so that the bulk of its code can remain under the MIT license.
- * This exemption does not extend to derived works not owned by
- * the Transmission project.
+ * It may be used under the GNU GPL versions 2 or 3
+ * or any future license endorsed by Mnemosyne LLC.
  *
- * $Id: hig.h 13388 2012-07-14 19:26:55Z jordan $
+ * $Id: hig.h 14241 2014-01-21 03:10:30Z jordan $
  */
 
 #ifndef GTR_HIG_H
@@ -20,53 +17,53 @@
 *** see section 8.2.2, Visual Design > Window Layout > Dialogs.
 **/
 
-GtkWidget* hig_workarea_create( void );
+GtkWidget* hig_workarea_create (void);
 
-void       hig_workarea_add_section_divider( GtkWidget * table,
-                                             guint     *  row );
+void       hig_workarea_add_section_divider (GtkWidget * table,
+                                             guint     *  row);
 
-void       hig_workarea_add_section_title_widget( GtkWidget * t,
+void       hig_workarea_add_section_title_widget (GtkWidget * t,
                                                   guint     * row,
-                                                  GtkWidget * w );
+                                                  GtkWidget * w);
 
-void       hig_workarea_add_section_title( GtkWidget  *  table,
+void       hig_workarea_add_section_title (GtkWidget  *  table,
                                            guint      * row,
-                                           const char * section_title );
+                                           const char * section_title);
 
-void       hig_workarea_add_wide_tall_control( GtkWidget * table,
+void       hig_workarea_add_wide_tall_control (GtkWidget * table,
                                                guint     * row,
-                                               GtkWidget * w );
+                                               GtkWidget * w);
 
-void       hig_workarea_add_wide_control( GtkWidget * table,
+void       hig_workarea_add_wide_control (GtkWidget * table,
                                           guint     * row,
-                                          GtkWidget * w );
+                                          GtkWidget * w);
 
-GtkWidget* hig_workarea_add_wide_checkbutton( GtkWidget  * table,
+GtkWidget* hig_workarea_add_wide_checkbutton (GtkWidget  * table,
                                               guint      * row,
                                               const char * mnemonic_string,
-                                              gboolean     is_active );
+                                              gboolean     is_active);
 
-void       hig_workarea_add_label_w( GtkWidget * table,
+void       hig_workarea_add_label_w (GtkWidget * table,
                                      guint       row,
-                                     GtkWidget * label_widget );
+                                     GtkWidget * label_widget);
 
-GtkWidget* hig_workarea_add_tall_row( GtkWidget  * table,
+GtkWidget* hig_workarea_add_tall_row (GtkWidget  * table,
                                       guint      * row,
                                       const char * mnemonic_string,
                                       GtkWidget  * control,
-                                      GtkWidget  * mnemonic_or_null_for_control );
+                                      GtkWidget  * mnemonic_or_null_for_control);
 
-GtkWidget* hig_workarea_add_row( GtkWidget  * table,
+GtkWidget* hig_workarea_add_row (GtkWidget  * table,
                                  guint      * row,
                                  const char * mnemonic_string,
                                  GtkWidget  * control,
-                                 GtkWidget  * mnemonic_or_null_for_control );
+                                 GtkWidget  * mnemonic_or_null_for_control);
 
-void       hig_workarea_add_row_w( GtkWidget * table,
+void       hig_workarea_add_row_w (GtkWidget * table,
                                    guint     * row,
                                    GtkWidget * label,
                                    GtkWidget * control,
-                                   GtkWidget * mnemonic_or_null_for_control );
+                                   GtkWidget * mnemonic_or_null_for_control);
 
 enum
 {

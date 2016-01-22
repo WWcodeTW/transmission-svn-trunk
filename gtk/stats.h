@@ -1,13 +1,10 @@
 /*
- * This file Copyright (C) Mnemosyne LLC
+ * This file Copyright (C) 2007-2014 Mnemosyne LLC
  *
- * This file is licensed by the GPL version 2. Works owned by the
- * Transmission project are granted a special exemption to clause 2(b)
- * so that the bulk of its code can remain under the MIT license.
- * This exemption does not extend to derived works not owned by
- * the Transmission project.
+ * It may be used under the GNU GPL versions 2 or 3
+ * or any future license endorsed by Mnemosyne LLC.
  *
- * $Id: stats.h 11709 2011-01-19 13:48:47Z jordan $
+ * $Id: stats.h 14241 2014-01-21 03:10:30Z jordan $
  */
 
 #ifndef GTR_STATS_DIALOG_H
@@ -16,6 +13,6 @@
 #include <gtk/gtk.h>
 #include "tr-core.h"
 
-GtkWidget* gtr_stats_dialog_new( GtkWindow * parent, TrCore * core );
+GtkWidget* gtr_stats_dialog_new (GtkWindow * parent, TrCore * core);
 
 #endif /* GTR_STATS_DIALOG_H */

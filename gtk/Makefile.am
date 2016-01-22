@@ -3,7 +3,9 @@ CLEANFILES =
 SUBDIRS = icons
 
 if TR_UNSTABLE
-GTK_EXTRA_CPPFLAGS=-DG_DISABLE_DEPRECATED -DGDK_PIXBUF_DISABLE_DEPRECATED -DGDK_DISABLE_DEPRECATED -DGTK_DISABLE_DEPRECATED -DPANGO_DISABLE_DEPRECATED
+#FIXME: migrate from GtkUIManager to GtkBuilder in 2.90
+#GTK_EXTRA_CPPFLAGS=-DG_DISABLE_DEPRECATED -DGDK_PIXBUF_DISABLE_DEPRECATED -DGDK_DISABLE_DEPRECATED -DGTK_DISABLE_DEPRECATED -DPANGO_DISABLE_DEPRECATED
+GTK_EXTRA_CPPFLAGS=-DG_DISABLE_DEPRECATED -DGDK_PIXBUF_DISABLE_DEPRECATED -DGDK_DISABLE_DEPRECATED -DPANGO_DISABLE_DEPRECATED
 endif
 
 # these should go in GTK_EXTRA_CPPFLAGS at some point, but not yet because it breaks libnotify's headers
@@ -19,12 +21,8 @@ AM_CFLAGS = \
     @LIBEVENT_CFLAGS@ \
     @GTK_CFLAGS@ \
     @LIBCURL_CFLAGS@ \
-    @OPENSSL_CFLAGS@ \
     @ZLIB_CFLAGS@ \
     @PTHREAD_CFLAGS@
-
-AM_LDFLAGS = \
-    @ZLIB_LDFLAGS@
 
 noinst_HEADERS = \
     actions.h \
@@ -90,14 +88,16 @@ transmission_gtk_LDADD = \
     @LIBUPNP_LIBS@ \
     @LIBNATPMP_LIBS@ \
     @DHT_LIBS@ \
+    @LIBB64_LIBS@ \
     @LIBUTP_LIBS@ \
     @GTK_LIBS@ \
     @LIBAPPINDICATOR_LIBS@ \
     @LIBEVENT_LIBS@ \
     @LIBCURL_LIBS@ \
-    @OPENSSL_LIBS@ \
+    @CRYPTO_LIBS@ \
     @ZLIB_LIBS@ \
-    @PTHREAD_LIBS@
+    @PTHREAD_LIBS@ \
+    ${LIBM}
 
 DESKTOP_IN_FILES=transmission-gtk.desktop.in
 DESKTOP_FILES=$(DESKTOP_IN_FILES:.desktop.in=.desktop)
@@ -109,15 +109,15 @@ Productivity_DATA = $(DESKTOP_FILES)
 icon_DATA = transmission.png
 icondir = $(datadir)/pixmaps
 
-UI_FILES = transmission-ui.xml 
+UI_FILES = transmission-ui.xml
 
-transmission-resources.c: transmission.gresource.xml $(UI_FILES) 
+transmission-resources.c: transmission.gresource.xml $(UI_FILES)
 	$(AM_V_GEN)glib-compile-resources --target=$@ --sourcedir=$(srcdir) \
-	  --generate-source --c-name transmission $< 
+	  --generate-source --c-name transmission $<
 
-transmission-resources.h: transmission.gresource.xml $(UI_FILES) 
+transmission-resources.h: transmission.gresource.xml $(UI_FILES)
 	$(AM_V_GEN)glib-compile-resources --target=$@ --sourcedir=$(srcdir) \
-	  --generate-header --c-name transmission $< 
+	  --generate-header --c-name transmission $<
 
 CLEANFILES += \
 	transmission-resources.c \

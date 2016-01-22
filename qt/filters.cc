@@ -1,56 +1,56 @@
 /*
- * This file Copyright (C) Mnemosyne LLC
+ * This file Copyright (C) 2009-2015 Mnemosyne LLC
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2
- * as published by the Free Software Foundation.
+ * It may be used under the GNU GPL versions 2 or 3
+ * or any future license endorsed by Mnemosyne LLC.
  *
- * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
- *
- * $Id: filters.cc 12611 2011-08-02 03:59:54Z jordan $
+ * $Id: Filters.cc 14537 2015-06-10 21:27:11Z mikedld $
  */
 
-#include "filters.h"
+#include "Filters.h"
 
 const QString FilterMode::names[NUM_MODES] =
 {
-    "show-all",
-    "show-active",
-    "show-downloading",
-    "show-seeding",
-    "show-paused",
-    "show-finished",
-    "show-verifying",
-    "show-error",
+  QLatin1String ("show-all"),
+  QLatin1String ("show-active"),
+  QLatin1String ("show-downloading"),
+  QLatin1String ("show-seeding"),
+  QLatin1String ("show-paused"),
+  QLatin1String ("show-finished"),
+  QLatin1String ("show-verifying"),
+  QLatin1String ("show-error")
 };
 
 int
-FilterMode :: modeFromName( const QString& name )
+FilterMode::modeFromName (const QString& name)
 {
-    for( int i=0; i<NUM_MODES; ++i )
-        if( names[i] == name )
-            return i;
-    return FilterMode().mode(); // use the default value
+  for (int i=0; i<NUM_MODES; ++i)
+    if( names[i] == name )
+      return i;
+
+  return FilterMode().mode(); // use the default value
 }
 
-const QString SortMode::names[NUM_MODES] = {
-    "sort-by-activity",
-    "sort-by-age",
-    "sort-by-eta",
-    "sort-by-name",
-    "sort-by-progress",
-    "sort-by-queue"
-    "sort-by-ratio",
-    "sort-by-size",
-    "sort-by-state",
-    "sort-by-id"
+const QString SortMode::names[NUM_MODES] =
+{
+  QLatin1String ("sort-by-activity"),
+  QLatin1String ("sort-by-age"),
+  QLatin1String ("sort-by-eta"),
+  QLatin1String ("sort-by-name"),
+  QLatin1String ("sort-by-progress"),
+  QLatin1String ("sort-by-queue"),
+  QLatin1String ("sort-by-ratio"),
+  QLatin1String ("sort-by-size"),
+  QLatin1String ("sort-by-state"),
+  QLatin1String ("sort-by-id")
 };
 
 int
-SortMode :: modeFromName( const QString& name )
+SortMode::modeFromName (const QString& name)
 {
-    for( int i=0; i<NUM_MODES; ++i )
-        if( names[i] == name )
-            return i;
-    return SortMode().mode(); // use the default value
+  for (int i=0; i<NUM_MODES; ++i)
+    if (names[i] == name)
+      return i;
+
+  return SortMode().mode(); // use the default value
 }

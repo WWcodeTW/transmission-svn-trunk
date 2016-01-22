@@ -1,13 +1,10 @@
 /*
- * This file Copyright (C) Mnemosyne LLC
+ * This file Copyright (C) 2007-2014 Mnemosyne LLC
  *
- * This file is licensed by the GPL version 2. Works owned by the
- * Transmission project are granted a special exemption to clause 2(b)
- * so that the bulk of its code can remain under the MIT license.
- * This exemption does not extend to derived works not owned by
- * the Transmission project.
+ * It may be used under the GNU GPL versions 2 or 3
+ * or any future license endorsed by Mnemosyne LLC.
  *
- * $Id: makemeta.h 11709 2011-01-19 13:48:47Z jordan $
+ * $Id: makemeta.h 14294 2014-06-10 00:43:21Z jordan $
  */
 
 #ifndef TR_MAKEMETA_H
@@ -38,8 +35,8 @@ tr_metainfo_builder_err;
 typedef struct tr_metainfo_builder
 {
     /**
-    ***  These are set by tr_makeMetaInfoBuilderCreate()
-    ***  and cleaned up by tr_metaInfoBuilderFree()
+    ***  These are set by tr_makeMetaInfoBuilderCreate ()
+    ***  and cleaned up by tr_metaInfoBuilderFree ()
     **/
 
     char *                      top;
@@ -48,30 +45,30 @@ typedef struct tr_metainfo_builder
     uint32_t                    fileCount;
     uint32_t                    pieceSize;
     uint32_t                    pieceCount;
-    int                         isSingleFile;
+    bool                        isFolder;
 
     /**
-    ***  These are set inside tr_makeMetaInfo()
+    ***  These are set inside tr_makeMetaInfo ()
     ***  by copying the arguments passed to it,
-    ***  and cleaned up by tr_metaInfoBuilderFree()
+    ***  and cleaned up by tr_metaInfoBuilderFree ()
     **/
 
     tr_tracker_info *  trackers;
     int                trackerCount;
     char *             comment;
     char *             outputFile;
-    int                isPrivate;
+    bool               isPrivate;
 
     /**
-    ***  These are set inside tr_makeMetaInfo() so the client
+    ***  These are set inside tr_makeMetaInfo () so the client
     ***  can poll periodically to see what the status is.
     ***  The client can also set abortFlag to nonzero to
-    ***  tell tr_makeMetaInfo() to abort and clean up after itself.
+    ***  tell tr_makeMetaInfo () to abort and clean up after itself.
     **/
 
     uint32_t                   pieceIndex;
-    int                        abortFlag;
-    int                        isDone;
+    bool                       abortFlag;
+    bool                       isDone;
     tr_metainfo_builder_err    result;
 
     /* file in use when result was set to _IO_READ or _IO_WRITE,
@@ -91,11 +88,18 @@ typedef struct tr_metainfo_builder
 tr_metainfo_builder;
 
 
-tr_metainfo_builder*tr_metaInfoBuilderCreate( const char * topFile );
+tr_metainfo_builder * tr_metaInfoBuilderCreate (const char * topFile);
 
-bool tr_setPieceSize( tr_metainfo_builder*, uint32_t piecesize );
+/**
+ * Call this before tr_makeMetaInfo() to override the builder.pieceSize
+ * and builder.pieceCount values that were set by tr_metainfoBuilderCreate()
+ *
+ * @return false if the piece size isn't valid; eg, isn't a power of two.
+ */
+bool tr_metaInfoBuilderSetPieceSize (tr_metainfo_builder * builder,
+                                     uint32_t              bytes);
 
-void                tr_metaInfoBuilderFree( tr_metainfo_builder* );
+void tr_metaInfoBuilderFree (tr_metainfo_builder*);
 
 /**
  * @brief create a new .torrent file
@@ -105,7 +109,7 @@ void                tr_metaInfoBuilderFree( tr_metainfo_builder* );
  *
  * It is the caller's responsibility to poll builder->isDone
  * from time to time!  When the worker thread sets that flag,
- * the caller must pass the builder to tr_metaInfoBuilderFree().
+ * the caller must pass the builder to tr_metaInfoBuilderFree ().
  *
  * @param outputFile if NULL, builder->top + ".torrent" will be used.
 
@@ -114,12 +118,12 @@ void                tr_metaInfoBuilderFree( tr_metainfo_builder* );
  *
  * @param trackerCount size of the `trackers' array
  */
-void tr_makeMetaInfo( tr_metainfo_builder *   builder,
+void tr_makeMetaInfo (tr_metainfo_builder *   builder,
                       const char *            outputFile,
                       const tr_tracker_info * trackers,
                       int                     trackerCount,
                       const char *            comment,
-                      int                     isPrivate );
+                      bool                    isPrivate);
 
 
 #ifdef __cplusplus

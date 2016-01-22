@@ -1,160 +1,163 @@
 /*
- * This file Copyright (C) Mnemosyne LLC
+ * This file Copyright (C) 2009-2015 Mnemosyne LLC
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2
- * as published by the Free Software Foundation.
+ * It may be used under the GNU GPL versions 2 or 3
+ * or any future license endorsed by Mnemosyne LLC.
  *
- * http://www.gnu.org/licenses/old-licenses/gpl-2.0.html
- *
- * $Id: session.h 12607 2011-08-01 22:24:24Z jordan $
+ * $Id: Session.h 14539 2015-06-12 22:12:12Z mikedld $
  */
 
-#ifndef TR_APP_SESSION_H
-#define TR_APP_SESSION_H
+#ifndef QTR_SESSION_H
+#define QTR_SESSION_H
 
 #include <QObject>
 #include <QSet>
-#include <QBuffer>
-#include <QFileInfoList>
-#include <QNetworkAccessManager>
 #include <QString>
-#include <QUrl>
-
-class QStringList;
-
-class AddData;
+#include <QStringList>
 
 #include <libtransmission/transmission.h>
+#include <libtransmission/quark.h>
+
+#include "RpcClient.h"
+
+class AddData;
+class Prefs;
 
 extern "C"
 {
-    struct evbuffer;
-    struct tr_benc;
+  struct tr_variant;
 }
 
-class Prefs;
+class FileAdded: public QObject
+{
+    Q_OBJECT
+
+  public:
+    FileAdded (int64_t tag, const QString& name): myTag (tag), myName (name) {}
+    virtual ~FileAdded () {}
+
+    void setFileToDelete (const QString& file) { myDelFile = file; }
+
+  public slots:
+    void executed (int64_t tag, const QString& result, tr_variant * arguments);
+
+  private:
+    const int64_t myTag;
+    const QString myName;
+
+    QString myDelFile;
+};
 
 class Session: public QObject
 {
-        Q_OBJECT
+    Q_OBJECT
 
-    public:
-        Session( const char * configDir, Prefs& prefs );
-        ~Session( );
+  public:
+    Session (const QString& configDir, Prefs& prefs);
+    virtual ~Session ();
 
-    public:
-        void stop( );
-        void restart( );
+    void stop ();
+    void restart ();
 
-    private:
-        void start( );
+    const QUrl& getRemoteUrl () const { return myRpc.url (); }
+    const tr_session_stats& getStats () const { return myStats; }
+    const tr_session_stats& getCumulativeStats () const { return myCumulativeStats; }
+    const QString& sessionVersion () const { return mySessionVersion; }
 
-    public:
-        const QUrl& getRemoteUrl( ) const { return myUrl; }
-        const struct tr_session_stats& getStats( ) const { return myStats; }
-        const struct tr_session_stats& getCumulativeStats( ) const { return myCumulativeStats; }
-        const QString& sessionVersion( ) const { return mySessionVersion; }
+    int64_t blocklistSize () const { return myBlocklistSize; }
+    void setBlocklistSize (int64_t i);
+    void updateBlocklist ();
+    void portTest ();
+    void copyMagnetLinkToClipboard (int torrentId);
 
-    public:
-        int64_t blocklistSize( ) const { return myBlocklistSize; }
-        void setBlocklistSize( int64_t i );
-        void updateBlocklist( );
-        void portTest( );
-        void copyMagnetLinkToClipboard( int torrentId );
+    /** returns true if the transmission session is being run inside this client */
+    bool isServer () const;
 
-    public:
+    /** returns true if isServer () is true or if the remote address is the localhost */
+    bool isLocal () const;
 
-        /** returns true if the transmission session is being run inside this client */
-        bool isServer( ) const;
+    void exec (tr_quark method, tr_variant * args, int64_t tag = -1);
+    void exec (const char * method, tr_variant * args, int64_t tag = -1);
 
-        /** returns true if isServer() is true or if the remote address is the localhost */
-        bool isLocal( ) const;
+    int64_t getUniqueTag () { return nextUniqueTag++; }
 
-    private:
-        void updateStats( struct tr_benc * args );
-        void updateInfo( struct tr_benc * args );
-        void parseResponse( const char * json, size_t len );
-        static void localSessionCallback( tr_session *, struct evbuffer *, void * );
+    void torrentSet (const QSet<int>& ids, const tr_quark key, bool val);
+    void torrentSet (const QSet<int>& ids, const tr_quark key, int val);
+    void torrentSet (const QSet<int>& ids, const tr_quark key, double val);
+    void torrentSet (const QSet<int>& ids, const tr_quark key, const QList<int>& val);
+    void torrentSet (const QSet<int>& ids, const tr_quark key, const QStringList& val);
+    void torrentSet (const QSet<int>& ids, const tr_quark key, const QPair<int,QString>& val);
+    void torrentSetLocation (const QSet<int>& ids, const QString& path, bool doMove);
+    void torrentRenamePath (const QSet<int>& ids, const QString& oldpath, const QString& newname);
+    void addTorrent (const AddData& addme, tr_variant * top, bool trashOriginal);
 
-    public:
-        void exec( const char * json );
-        void exec( const struct tr_benc * request );
+  public slots:
+    void pauseTorrents (const QSet<int>& torrentIds = QSet<int> ());
+    void startTorrents (const QSet<int>& torrentIds = QSet<int> ());
+    void startTorrentsNow (const QSet<int>& torrentIds = QSet<int> ());
+    void queueMoveTop (const QSet<int>& torrentIds = QSet<int> ());
+    void queueMoveUp (const QSet<int>& torrentIds = QSet<int> ());
+    void queueMoveDown (const QSet<int>& torrentIds = QSet<int> ());
+    void queueMoveBottom (const QSet<int>& torrentIds = QSet<int> ());
+    void refreshSessionInfo ();
+    void refreshSessionStats ();
+    void refreshActiveTorrents ();
+    void refreshAllTorrents ();
+    void initTorrents (const QSet<int>& ids = QSet<int> ());
+    void addNewlyCreatedTorrent (const QString& filename, const QString& localPath);
+    void addTorrent (const AddData& addme);
+    void removeTorrents (const QSet<int>& torrentIds, bool deleteFiles = false);
+    void verifyTorrents (const QSet<int>& torrentIds);
+    void reannounceTorrents (const QSet<int>& torrentIds);
+    void launchWebInterface ();
+    void updatePref (int key);
+  
+    /** request a refresh for statistics, including the ones only used by the properties dialog, for a specific torrent */
+    void refreshExtraStats (const QSet<int>& ids);
 
-    public:
-        int64_t getUniqueTag( ) { return nextUniqueTag++; }
+  signals:
+    void executed (int64_t tag, const QString& result, tr_variant * arguments);
+    void sourceChanged ();
+    void portTested (bool isOpen);
+    void statsUpdated ();
+    void sessionUpdated ();
+    void blocklistUpdated (int);
+    void torrentsUpdated (tr_variant * torrentList, bool completeList);
+    void torrentsRemoved (tr_variant * torrentList);
+    void dataReadProgress ();
+    void dataSendProgress ();
+    void error (QNetworkReply::NetworkError);
+    void errorMessage (const QString&);
+    void httpAuthenticationRequired ();
 
-    private:
-        void sessionSet( const char * key, const QVariant& variant );
-        void pumpRequests( );
-        void sendTorrentRequest( const char * request, const QSet<int>& torrentIds );
-        static void updateStats( struct tr_benc * d, struct tr_session_stats * stats );
-        void refreshTorrents( const QSet<int>& torrentIds );
-        QNetworkAccessManager * networkAccessManager( );
+  private:
+    void start ();
 
-    public:
-        void torrentSet( const QSet<int>& ids, const QString& key, bool val );
-        void torrentSet( const QSet<int>& ids, const QString& key, int val );
-        void torrentSet( const QSet<int>& ids, const QString& key, double val );
-        void torrentSet( const QSet<int>& ids, const QString& key, const QList<int>& val );
-        void torrentSet( const QSet<int>& ids, const QString& key, const QStringList& val );
-        void torrentSet( const QSet<int>& ids, const QString& key, const QPair<int,QString>& val);
-        void torrentSetLocation( const QSet<int>& ids, const QString& path, bool doMove );
+    void updateStats (tr_variant * args);
+    void updateInfo (tr_variant * args);
 
+    void sessionSet (const tr_quark key, const QVariant& variant);
+    void pumpRequests ();
+    void sendTorrentRequest (const char * request, const QSet<int>& torrentIds);
+    void refreshTorrents (const QSet<int>& torrentIds);
 
-    public slots:
-        void pauseTorrents( const QSet<int>& torrentIds = QSet<int>() );
-        void startTorrents( const QSet<int>& torrentIds = QSet<int>() );
-        void startTorrentsNow( const QSet<int>& torrentIds = QSet<int>() );
-        void queueMoveTop( const QSet<int>& torrentIds = QSet<int>() );
-        void queueMoveUp( const QSet<int>& torrentIds = QSet<int>() );
-        void queueMoveDown( const QSet<int>& torrentIds = QSet<int>() );
-        void queueMoveBottom( const QSet<int>& torrentIds = QSet<int>() );
-        void refreshSessionInfo( );
-        void refreshSessionStats( );
-        void refreshActiveTorrents( );
-        void refreshAllTorrents( );
-        void initTorrents( const QSet<int>& ids = QSet<int>() );
-        void addNewlyCreatedTorrent( const QString& filename, const QString& localPath );
-        void addTorrent( const AddData& addme );
-        void removeTorrents( const QSet<int>& torrentIds, bool deleteFiles=false );
-        void verifyTorrents( const QSet<int>& torrentIds );
-        void reannounceTorrents( const QSet<int>& torrentIds );
-        void launchWebInterface( );
-        void updatePref( int key );
+    static void updateStats (tr_variant * d, tr_session_stats * stats);
 
-        /** request a refresh for statistics, including the ones only used by the properties dialog, for a specific torrent */
-        void refreshExtraStats( const QSet<int>& ids );
+  private slots:
+    void responseReceived (int64_t tag, const QString& result, tr_variant * args);
 
-    private slots:
-        void onFinished( QNetworkReply * reply );
+  private:
+    QString const myConfigDir;
+    Prefs& myPrefs;
 
-    signals:
-        void executed( int64_t tag, const QString& result, struct tr_benc * arguments );
-        void sourceChanged( );
-        void portTested( bool isOpen );
-        void statsUpdated( );
-        void sessionUpdated( );
-        void blocklistUpdated( int );
-        void torrentsUpdated( struct tr_benc * torrentList, bool completeList );
-        void torrentsRemoved( struct tr_benc * torrentList );
-        void dataReadProgress( );
-        void dataSendProgress( );
-        void httpAuthenticationRequired( );
-
-    private:
-        int64_t nextUniqueTag;
-        int64_t myBlocklistSize;
-        Prefs& myPrefs;
-        tr_session * mySession;
-        QString myConfigDir;
-        QString mySessionId;
-        QUrl myUrl;
-        QNetworkAccessManager * myNAM;
-        struct tr_session_stats myStats;
-        struct tr_session_stats myCumulativeStats;
-        QString mySessionVersion;
+    int64_t nextUniqueTag;
+    int64_t myBlocklistSize;
+    tr_session * mySession;
+    QStringList myIdleJSON;
+    tr_session_stats myStats;
+    tr_session_stats myCumulativeStats;
+    QString mySessionVersion;
+    RpcClient myRpc;
 };
 
-#endif
-
+#endif // QTR_SESSION_H
